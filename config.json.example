@@ -1,0 +1,37 @@
+{
+  "device": {
+    "prop_name": "Front Hall Enigma",
+    "instance": "site1-enigma1"
+  },
+  "wifi": {
+    "primary": { "ssid": "REPLACE_ME_PRIMARY_SSID", "password": "REPLACE_ME_PRIMARY_PASSWORD" },
+    "backup":  { "ssid": "",                        "password": "" },
+    "ap":      { "password": "MCEscher" }
+  },
+  "mqtt": {
+    "host": "mqtt.local",
+    "port": 1883,
+    "username": "",
+    "password": "",
+    "base_topic": "paradox/site1/enigma1",
+    "announce_topic": "paradox/props",
+    "heartbeat_interval_ms": 10000
+  },
+  "puzzle": {
+    "target": null,
+    "identify_duration_ms": 2000
+  },
+  "display": {
+    "brightness": 1
+  },
+  "battery": {
+    "low_v": 12.35,
+    "critical_v": 12.10,
+    "hysteresis_v": 0.10,
+    "sample_interval_ms": 10000
+  },
+  "scan": {
+    "dwell_ms": 10,
+    "debounce_samples": 4
+  }
+}
