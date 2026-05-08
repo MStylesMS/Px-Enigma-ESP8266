@@ -20,6 +20,8 @@
 
 #include "config.h"
 #include "log.h"
+#include "display_mgr.h"
+#include "battery_monitor.h"
 #include "wifi_mgr.h"
 #include "web_ui.h"
 #include "ota_mgr.h"
@@ -33,8 +35,9 @@
 // Module tick stubs — replaced with real includes as phases are implemented.
 // ---------------------------------------------------------------------------
 
-static inline void battery_monitor_loop() {} // Phase 9b
-static inline void sleep_manager_loop()  {}  // Phase 9c
+static inline void sleep_manager_loop() {}   // Phase 9c
+// display_mgr   — Phase 9 (live)
+// battery_monitor — Phase 9 (live, partial; curves Phase 9b)
 // switch_matrix — Phase 6 (live)
 // code_engine   — Phase 7 (live)
 // mqtt_mgr — Phase 5 (live)
@@ -79,7 +82,7 @@ static void matrix_tick() {
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=8-mqtt fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=9-hw fw=%s", FW_VERSION);
 
     bool cfg_was_invalid = false;
     cfg::load(g_config, cfg_was_invalid);
@@ -88,8 +91,17 @@ void setup() {
         mqtt_mgr::note_config_invalid_pending();
     }
 
-    commands::begin(&g_config, &g_engine);
+    // ---- Boot order per spec §8.3: display + matrix BEFORE WiFi/MQTT ----
+    // This ensures the first lit code appears within 1.5 s of power-on.
+    // Sanity-check boot-strap pins BEFORE g_matrix.begin() reconfigures GPIO15
+    // (COL0) as an output — after that, its logic level is no longer meaningful
+    // as a boot-strap check.
+    display_mgr::begin(g_config);
+    display_mgr::sanity_check_boot_pins();
     g_matrix.begin(switch_matrix::esp_scan_io(), g_config.scan_debounce_samples);
+    battery_monitor::begin(g_config);
+
+    commands::begin(&g_config, &g_engine);
 
     // Code engine: wire callbacks to MQTT event publishers.
     {
@@ -151,6 +163,25 @@ void setup() {
         appstate::set_code_state(&g_engine.state());
     }
 
+    // Capture initial switch state before showing the boot code.
+    // The matrix needs (scan_debounce_samples + 1) full sweeps to commit a
+    // stable reading. We do this synchronously here — it costs at most
+    // (samples+1) * scan_poll_interval_ms ≈ 50 ms with defaults, well within
+    // the ≤ 1.5 s cold-boot budget and far faster than WiFi association.
+    {
+        uint8_t  sweeps   = (uint8_t)(g_config.scan_debounce_samples + 1);
+        uint32_t interval = g_config.scan_poll_interval_ms
+                            ? g_config.scan_poll_interval_ms : 10u;
+        for (uint8_t i = 0; i < sweeps; ++i) {
+            for (uint8_t c = 0; c < switch_matrix::NUM_COLS; ++c) g_matrix.tick();
+            delay(interval);
+        }
+        g_engine.tick(g_matrix.state());
+    }
+
+    // Show first lit code immediately (spec §8.3: ≤ 1.5 s cold-boot target).
+    display_mgr::show_boot_code(g_engine.state().code_str);
+
     wifi_mgr::begin(g_config);
     web_ui::begin(&g_config);
     ota_mgr::begin_arduino_ota(g_config);
@@ -160,16 +191,26 @@ void setup() {
 
     pxlog::info("main", "matrix_cells=%u cols=%u rows=%u",
                 MATRIX_NUM_CELLS, pins::NUM_COLS, pins::NUM_ROWS);
-    pxlog::info("main", "i2c sda=%u scl=%u display_low=0x%02x display_high=0x%02x",
-                pins::I2C_SDA, pins::I2C_SCL,
-                i2c_addr::DISPLAY_LOW, i2c_addr::DISPLAY_HIGH);
 }
 
 void loop() {
     matrix_tick();
     g_engine.tick(g_matrix.state());
-    battery_monitor_loop();
+    battery_monitor::tick();
     sleep_manager_loop();
+
+    // Drive display from current engine + command state.
+    {
+        const auto& es = g_engine.state();
+        display_mgr::tick(es.code_str,
+                          es.latched,
+                          commands::identify_active(),
+                          commands::is_off(),
+                          appstate::mqtt_connected(),
+                          wifi_mgr::sta_rssi(),
+                          g_config.signal_indicator_enabled,
+                          g_config.signal_rssi_dbm);
+    }
     mqtt_mgr::loop();
     commands::tick();
     web_ui::loop();

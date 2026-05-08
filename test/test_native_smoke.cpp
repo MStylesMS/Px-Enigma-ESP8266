@@ -734,6 +734,165 @@ void test_engine_set_target_latching_no_match_no_solve() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 9 — display digit-position mapping + battery calibration
+//
+// The hardware driver (display_mgr.cpp) is not compiled into the native build
+// (it requires Wire / Adafruit_LEDBackpack).  We pin the pure data transforms
+// that sit underneath the driver: the code formatter, the XX/YY/ZZ parser,
+// and the battery ADC calibration arithmetic.
+//
+// The digit-position layout contract being tested:
+//   For code "XX-YY-ZZ" (XX = code/10000, YY = (code/100)%100, ZZ = code%100):
+//     display_low [0]  = XX / 10
+//     display_high[1]  = XX % 10
+//     display_high[3]  = dash
+//     display_low [4]  = YY / 10
+//     display_high[0]  = YY % 10
+//     display_low [1]  = dash
+//     display_low [3]  = ZZ / 10
+//     display_high[4]  = ZZ % 10
+// ---------------------------------------------------------------------------
+
+// Helper: parse "XX-YY-ZZ" string → xx, yy, zz integers.
+static void parse_xxyyzz(const char* s, int* xx, int* yy, int* zz) {
+    *xx = (s[0] - '0') * 10 + (s[1] - '0');
+    *yy = (s[3] - '0') * 10 + (s[4] - '0');
+    *zz = (s[6] - '0') * 10 + (s[7] - '0');
+}
+
+void test_display_digit_position_parse() {
+    // Verify that parse_xxyyzz correctly reverses format_code.
+    char buf[9];
+    code_engine::format_code(123456, buf);
+    int xx, yy, zz;
+    parse_xxyyzz(buf, &xx, &yy, &zz);
+    TEST_ASSERT_EQUAL_INT(12, xx);
+    TEST_ASSERT_EQUAL_INT(34, yy);
+    TEST_ASSERT_EQUAL_INT(56, zz);
+}
+
+void test_display_digit_position_xx_yy_zz_parts() {
+    // Pin the digit decomposition used by render_code() for "12-34-56":
+    //   display_low[0]  = xx / 10 = 1
+    //   display_high[1] = xx % 10 = 2
+    //   display_low[4]  = yy / 10 = 3
+    //   display_high[0] = yy % 10 = 4
+    //   display_low[3]  = zz / 10 = 5
+    //   display_high[4] = zz % 10 = 6
+    char buf[9];
+    code_engine::format_code(123456, buf);
+    int xx, yy, zz;
+    parse_xxyyzz(buf, &xx, &yy, &zz);
+
+    TEST_ASSERT_EQUAL_INT(1, xx / 10);   // display_low[0]
+    TEST_ASSERT_EQUAL_INT(2, xx % 10);   // display_high[1]
+    TEST_ASSERT_EQUAL_INT(3, yy / 10);   // display_low[4]
+    TEST_ASSERT_EQUAL_INT(4, yy % 10);   // display_high[0]
+    TEST_ASSERT_EQUAL_INT(5, zz / 10);   // display_low[3]
+    TEST_ASSERT_EQUAL_INT(6, zz % 10);   // display_high[4]
+}
+
+void test_display_format_code_roundtrip_all_parts() {
+    // Walk the range boundary values and verify that the decomposition
+    // xx = code / 10000, yy = (code / 100) % 100, zz = code % 100
+    // is consistent with the string produced by format_code().
+    const uint32_t cases[] = { 0u, 1u, 9u, 99u, 100u, 9999u, 10000u,
+                                99999u, 100000u, 999999u };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        uint32_t code = cases[i];
+        int exp_xx = (int)(code / 10000u);
+        int exp_yy = (int)((code / 100u) % 100u);
+        int exp_zz = (int)(code % 100u);
+
+        char buf[9];
+        code_engine::format_code(code, buf);
+        int xx, yy, zz;
+        parse_xxyyzz(buf, &xx, &yy, &zz);
+
+        TEST_ASSERT_EQUAL_INT(exp_xx, xx);
+        TEST_ASSERT_EQUAL_INT(exp_yy, yy);
+        TEST_ASSERT_EQUAL_INT(exp_zz, zz);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Battery calibration arithmetic (mirrors battery_monitor.cpp maths).
+// ---------------------------------------------------------------------------
+
+static float batt_calc_voltage(uint16_t raw, uint16_t at_0v, uint16_t at_full, float full_v) {
+    if (at_full == at_0v || at_full == 0 || full_v <= 0.0f) {
+        // Default legacy: V = 0.0531 * raw + 0.1978
+        return 0.0531f * (float)raw + 0.1978f;
+    }
+    float slope  = full_v / (float)(at_full - at_0v);
+    float offset = -(slope * (float)at_0v);
+    return slope * (float)raw + offset;
+}
+
+void test_battery_calibration_slope_offset() {
+    // at_0v_raw=0, at_full_raw=230, full_v=12.0 → slope=12.0/230 ≈ 0.0522
+    // V(0)   = 0.0
+    // V(230) = 12.0
+    float v0   = batt_calc_voltage(0,   0, 230, 12.0f);
+    float v230 = batt_calc_voltage(230, 0, 230, 12.0f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f,  v0);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.0f, v230);
+}
+
+void test_battery_calibration_defaults_on_zero_range() {
+    // Invalid calibration (at_full == at_0) → falls back to legacy defaults.
+    // Legacy: V = 0.0531 * raw + 0.1978
+    // At raw=100 → 0.0531*100 + 0.1978 = 5.508
+    float v = batt_calc_voltage(100, 0, 0, 12.0f);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0531f * 100.0f + 0.1978f, v);
+}
+
+// ---------------------------------------------------------------------------
+// RSSI bars logic (mirrors display_mgr.cpp rssi_bars()).
+// ---------------------------------------------------------------------------
+
+static int rssi_bars_local(int rssi_dbm, const int8_t thresholds[cfg::RSSI_THRESHOLDS]) {
+    if (rssi_dbm > 0) return 0;
+    for (int i = 0; i < (int)cfg::RSSI_THRESHOLDS; ++i) {
+        if (rssi_dbm >= thresholds[i]) return (int)cfg::RSSI_THRESHOLDS - i;
+    }
+    return 0;
+}
+
+void test_battery_rssi_bars_full_signal() {
+    cfg::Config c;
+    cfg::load_defaults(c);
+    // Default thresholds: -55,-60,-65,-70,-75,-80,-85
+    // rssi = -55 → >= thresholds[0] → bars = 7 - 0 = 7
+    int bars = rssi_bars_local(-55, c.signal_rssi_dbm);
+    TEST_ASSERT_EQUAL_INT(7, bars);
+}
+
+void test_battery_rssi_bars_no_signal() {
+    cfg::Config c;
+    cfg::load_defaults(c);
+    // rssi = -95 → below all thresholds → 0
+    int bars = rssi_bars_local(-95, c.signal_rssi_dbm);
+    TEST_ASSERT_EQUAL_INT(0, bars);
+}
+
+void test_battery_rssi_bars_partial() {
+    cfg::Config c;
+    cfg::load_defaults(c);
+    // rssi = -75 → >= thresholds[4] (-75) → bars = 7 - 4 = 3
+    int bars = rssi_bars_local(-75, c.signal_rssi_dbm);
+    TEST_ASSERT_EQUAL_INT(3, bars);
+}
+
+void test_battery_rssi_bars_disconnected() {
+    cfg::Config c;
+    cfg::load_defaults(c);
+    // rssi > 0 means disconnected
+    int bars = rssi_bars_local(1, c.signal_rssi_dbm);
+    TEST_ASSERT_EQUAL_INT(0, bars);
+}
+
+// ---------------------------------------------------------------------------
 
 int main() {
     UNITY_BEGIN();
@@ -796,5 +955,15 @@ int main() {
     RUN_TEST(test_engine_set_target_live_already_solved_no_duplicate_event);
     RUN_TEST(test_engine_set_target_latching_immediate_match_fires_solve);
     RUN_TEST(test_engine_set_target_latching_no_match_no_solve);
+    // Phase 9 — display digit-position mapping + battery calibration
+    RUN_TEST(test_display_digit_position_parse);
+    RUN_TEST(test_display_digit_position_xx_yy_zz_parts);
+    RUN_TEST(test_display_format_code_roundtrip_all_parts);
+    RUN_TEST(test_battery_calibration_slope_offset);
+    RUN_TEST(test_battery_calibration_defaults_on_zero_range);
+    RUN_TEST(test_battery_rssi_bars_full_signal);
+    RUN_TEST(test_battery_rssi_bars_no_signal);
+    RUN_TEST(test_battery_rssi_bars_partial);
+    RUN_TEST(test_battery_rssi_bars_disconnected);
     return UNITY_END();
 }

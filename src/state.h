@@ -23,6 +23,7 @@ void reset_heap_watermark();
 // MQTT module reports its connection status here so build_state() can
 // surface it without creating a hard dependency on mqtt_mgr.
 void set_mqtt_connected(bool v);
+bool mqtt_connected();
 
 // Code engine reports its live state here so build_state() stays DRY.
 void set_code_state(const code_engine::CodeState* cs);

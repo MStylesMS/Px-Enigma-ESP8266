@@ -1,5 +1,6 @@
 // state.cpp
 #include "state.h"
+#include "battery_monitor.h"
 #include "log.h"
 #include "wifi_mgr.h"
 
@@ -13,6 +14,7 @@ static const code_engine::CodeState* s_code_state = nullptr;
 
 void reset_heap_watermark() { s_min_free_heap_bytes = UINT32_MAX; }
 void set_mqtt_connected(bool v) { s_mqtt_connected = v; }
+bool mqtt_connected() { return s_mqtt_connected; }
 void set_code_state(const code_engine::CodeState* cs) { s_code_state = cs; }
 
 static void write_iso_timestamp(char* out, size_t out_size) {
@@ -84,12 +86,16 @@ void build_state(const cfg::Config& c, JsonDocument& out) {
     disp["blanked"]          = false;
     disp["signal_indicator"] = c.signal_indicator_enabled;
 
-    // Battery (Phase 9b) not implemented yet.
+    // Battery (Phase 9: voltage + raw ADC; percent/curves Phase 9b).
     JsonObject batt = out["battery"].to<JsonObject>();
     batt["profile"]   = c.battery_profile;
-    batt["voltage_v"] = nullptr;
-    batt["percent"]   = nullptr;
-    batt["status"]    = "external";
+    float v = battery_monitor::voltage_v();
+    if (!isnan(v)) batt["voltage_v"] = v;
+    else           batt["voltage_v"] = nullptr;
+    batt["raw_a0"]  = (battery_monitor::raw_adc() >= 0)
+                      ? (int)battery_monitor::raw_adc() : (int)0;
+    batt["percent"] = nullptr;    // Phase 9b
+    batt["status"]  = "ok";       // Phase 9b will manage LOW_BATT / CRIT_BATT
 
     JsonObject sleep = out["sleep"].to<JsonObject>();
     sleep["inactivity_minutes"] = c.battery_inactivity_minutes;

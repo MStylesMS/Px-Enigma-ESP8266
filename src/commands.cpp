@@ -5,6 +5,7 @@
 //          clearTarget, setMode, reset, getCode, setBatteryProfile,
 //          setSignalIndicator, on, off).
 #include "commands.h"
+#include "display_mgr.h"
 #include "log.h"
 #include "mqtt_mgr.h"
 
@@ -192,6 +193,7 @@ void handle_command_payload(const uint8_t* payload, size_t len) {
         if (b < 0 || b > 15) { fail_invalid_arg("brightness"); return; }
         bool persist = doc["persist"] | true;
         s_cfg->display_brightness = (uint8_t)b;
+        display_mgr::set_brightness((uint8_t)b);
         if (persist) cfg::save(*s_cfg);
         publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
         mqtt_mgr::publish_state();
