@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "log.h"
+#include "wifi_mgr.h"
 
 // ---------------------------------------------------------------------------
 // Module tick stubs — replaced with real includes as phases are implemented.
@@ -32,7 +33,6 @@ static inline void sleep_manager_loop()  {}  // Phase 9c
 static inline void mqtt_mgr_loop()      {}   // Phase 5
 static inline void web_ui_loop()        {}   // Phase 3
 static inline void ota_mgr_loop()       {}   // Phase 4
-static inline void wifi_mgr_loop()      {}   // Phase 2
 
 // ---------------------------------------------------------------------------
 // Device configuration (loaded from LittleFS at boot)
@@ -46,13 +46,15 @@ cfg::Config g_config;
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=1-config fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=2-wifi fw=%s", FW_VERSION);
 
     bool cfg_was_invalid = false;
     cfg::load(g_config, cfg_was_invalid);
     if (cfg_was_invalid) {
         pxlog::warn("main", "config_invalid: using built-in defaults");
     }
+
+    wifi_mgr::begin(g_config);
 
     pxlog::info("main", "matrix_cells=%u cols=%u rows=%u",
                 MATRIX_NUM_CELLS, pins::NUM_COLS, pins::NUM_ROWS);
@@ -69,6 +71,6 @@ void loop() {
     mqtt_mgr_loop();
     web_ui_loop();
     ota_mgr_loop();
-    wifi_mgr_loop();
+    wifi_mgr::loop();
     yield();
 }
