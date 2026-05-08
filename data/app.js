@@ -104,14 +104,46 @@ async function saveConfig(ev) {
 }
 
 // ---- switch grid ----
-// Bit layout (matches firmware hardware_io / config.h):
-//   bit = col_index * rows + row_index   (0-based)
-//   switch number = bit + 1
-// The grid uses grid-auto-flow:column so iterating bits 0..N in order
-// places SW1-SWrows in column 1, SW(rows+1)..SW(2*rows) in column 2, etc.
+// Mapping model:
+//   A = row_gpio_to_a[row_gpio], B = col_gpio_to_b[col_gpio]
+//   bit = A + rows * B
+// where row/col gpio order is defined by the firmware pin map arrays.
 
-let g_sw_layout = { cols: 4, rows: 5, switch_count: 20,
-                    rotation: 0, mirror_x: false, mirror_y: false };
+let g_sw_layout = {
+  cols: 4,
+  rows: 5,
+  ui_cols: 5,
+  ui_rows: 4,
+  switch_count: 20,
+  rotation: 0,
+  mirror_x: false,
+  mirror_y: false,
+  prop_row_to_scan_col: [1, 0, 2, 3],
+  prop_col_to_scan_row: [3, 2, 0, 4, 1],
+  row_gpios: [12, 3, 14, 4, 13],
+  col_gpios: [15, 1, 5, 16],
+  row_gpio_to_a: { '12': 0, '3': 1, '14': 2, '4': 3, '13': 4 },
+  col_gpio_to_b: { '15': 0, '1': 1, '5': 2, '16': 3 },
+  digit_order: [4, 2, 6, 1, 5, 3]
+};
+
+function formatCodeForUi(codeStr) {
+  if (typeof codeStr !== 'string') return codeStr;
+  const digits = codeStr.replace(/[^0-9]/g, '');
+  if (digits.length !== 6) return codeStr;
+
+  const ord = Array.isArray(g_sw_layout.digit_order) ? g_sw_layout.digit_order : [1, 2, 3, 4, 5, 6];
+  if (ord.length !== 6) return codeStr;
+
+  const seen = new Set();
+  for (const x of ord) {
+    if (!Number.isInteger(x) || x < 1 || x > 6 || seen.has(x)) return codeStr;
+    seen.add(x);
+  }
+
+  const remap = ord.map((p) => digits[p - 1]).join('');
+  return remap.slice(0, 2) + '-' + remap.slice(2, 4) + '-' + remap.slice(4, 6);
+}
 
 async function loadSwitchLayout() {
   try {
@@ -123,13 +155,15 @@ async function loadSwitchLayout() {
 
 function initSwitchGrid() {
   const { cols, rows, switch_count, rotation, mirror_x, mirror_y } = g_sw_layout;
+  const uiCols = Number.isInteger(g_sw_layout.ui_cols) ? g_sw_layout.ui_cols : cols;
+  const uiRows = Number.isInteger(g_sw_layout.ui_rows) ? g_sw_layout.ui_rows : rows;
   const cellPx = 36, gapPx = 6;
-  const gridW = cols * cellPx + (cols - 1) * gapPx;
-  const gridH = rows * cellPx + (rows - 1) * gapPx;
+  const gridW = uiCols * cellPx + (uiCols - 1) * gapPx;
+  const gridH = uiRows * cellPx + (uiRows - 1) * gapPx;
 
   const grid = $('#switch-grid');
-  grid.style.gridTemplateColumns = `repeat(${cols}, ${cellPx}px)`;
-  grid.style.gridTemplateRows    = `repeat(${rows}, ${cellPx}px)`;
+  grid.style.gridTemplateColumns = `repeat(${uiCols}, ${cellPx}px)`;
+  grid.style.gridTemplateRows    = `repeat(${uiRows}, ${cellPx}px)`;
   grid.style.width  = gridW + 'px';
   grid.style.height = gridH + 'px';
 
@@ -144,15 +178,36 @@ function initSwitchGrid() {
   $('#switch-grid-wrap').style.minHeight = diag + 'px';
 
   grid.innerHTML = '';
-  const total = cols * rows;
-  for (let bit = 0; bit < total; bit++) {
-    const swNum = bit + 1;
-    const cell = document.createElement('div');
-    const inactive = swNum > switch_count;
-    cell.className = 'sw-cell' + (inactive ? ' sw-inactive' : '');
-    cell.dataset.bit = bit;
-    if (!inactive) cell.textContent = swNum;
-    grid.appendChild(cell);
+  const rowGpios = Array.isArray(g_sw_layout.row_gpios) ? g_sw_layout.row_gpios : [12, 3, 14, 4, 13];
+  const colGpios = Array.isArray(g_sw_layout.col_gpios) ? g_sw_layout.col_gpios : [15, 1, 5, 16];
+  const propRowToScanCol = Array.isArray(g_sw_layout.prop_row_to_scan_col)
+    ? g_sw_layout.prop_row_to_scan_col : [0, 1, 2, 3];
+  const propColToScanRow = Array.isArray(g_sw_layout.prop_col_to_scan_row)
+    ? g_sw_layout.prop_col_to_scan_row : [0, 1, 2, 3, 4];
+  const rowMap = g_sw_layout.row_gpio_to_a || {};
+  const colMap = g_sw_layout.col_gpio_to_b || {};
+
+  for (let r = 0; r < uiRows; r++) {
+    for (let c = 0; c < uiCols; c++) {
+      // UI uses prop orientation. Map prop row/col to scan col/row indexes.
+      const scanCol = Number.isInteger(propRowToScanCol[r]) ? propRowToScanCol[r] : r;
+      const scanRow = Number.isInteger(propColToScanRow[c]) ? propColToScanRow[c] : c;
+
+      const rowGpio = String(rowGpios[scanRow]);
+      const colGpio = String(colGpios[scanCol]);
+      const a = Number.isInteger(rowMap[rowGpio]) ? rowMap[rowGpio] : scanRow;
+      const b = Number.isInteger(colMap[colGpio]) ? colMap[colGpio] : scanCol;
+      const bit = a + rows * b;
+
+      const swNum = r * uiCols + c + 1;
+      const inactive = swNum > switch_count;
+
+      const cell = document.createElement('div');
+      cell.className = 'sw-cell' + (inactive ? ' sw-inactive' : '');
+      cell.dataset.bit = bit;
+      if (!inactive) cell.textContent = swNum;
+      grid.appendChild(cell);
+    }
   }
 }
 
@@ -175,7 +230,7 @@ async function loadState() {
     // Summary row updates
     const set = (id, val) => { const el = $(id); if (el) el.textContent = val; };
     set('#s-status',  s.status || '—');
-    set('#s-code',    (s.code && s.code.code) || '—');
+    set('#s-code',    (s.code && s.code.code) ? formatCodeForUi(s.code.code) : '—');
     set('#s-solved',  (s.code && s.code.solved != null) ? String(s.code.solved) : '—');
     if (s.code) updateSwitchGrid(s.code.code_bits);
     if (s.wifi) {
@@ -220,11 +275,68 @@ async function loadLog() {
   }
 }
 
+
+    function applyState(s) {
+      $('#state-raw').textContent = JSON.stringify(s, null, 2);
+
+      // Summary row updates
+      const set = (id, val) => { const el = $(id); if (el) el.textContent = val; };
+      set('#s-status',  s.status || '—');
+      set('#s-code',    (s.code && s.code.code) ? formatCodeForUi(s.code.code) : '—');
+      set('#s-solved',  (s.code && s.code.solved != null) ? String(s.code.solved) : '—');
+      if (s.code) updateSwitchGrid(s.code.code_bits);
+      if (s.wifi) {
+        const sta = s.wifi.sta || {};
+        set('#s-sta',  sta.connected ? (sta.ssid + ' ' + sta.ip) : 'disconnected');
+        set('#s-rssi', sta.rssi != null ? sta.rssi + ' dBm' : '—');
+        const ap = s.wifi.ap || {};
+        set('#s-ap',   (ap.ssid || '—') + ' — ' + (ap.clients || 0) + ' client(s)');
+        if (ap.ssid) $('#ap-ssid-ro').value = ap.ssid;
+      }
+      if (s.mqtt) {
+        set('#s-mqtt', s.mqtt.connected ? ('connected to ' + s.mqtt.broker) : 'disconnected');
+      }
+      if (s.battery) {
+        const pct = s.battery.percent != null ? s.battery.percent + '%' : '';
+        const v   = s.battery.voltage_v != null ? ' ' + s.battery.voltage_v + 'V' : '';
+        set('#s-batt', (s.battery.profile || '—') + (pct ? ' ' + pct : '') + v);
+      }
+      if (s.health) {
+        const free = s.health.free_heap_bytes;
+        set('#s-heap', free != null ? Math.round(free / 1024) + ' kB' : '—');
+      }
+      const uptime = s.uptime_s;
+      if (uptime != null) {
+        const h = Math.floor(uptime / 3600), m = Math.floor((uptime % 3600) / 60), sec = uptime % 60;
+        set('#s-uptime', h + 'h ' + m + 'm ' + sec + 's');
+      }
+    }
+
+    let g_evt = null;
+
+    function connectEvents() {
+      if (!window.EventSource) return;
+      if (g_evt) g_evt.close();
+
+      const es = new EventSource('/api/events');
+      g_evt = es;
+      es.addEventListener('state', (ev) => {
+        try { applyState(JSON.parse(ev.data)); } catch (_) {}
+      });
+      es.addEventListener('code_changed', (ev) => {
+        try { applyState(JSON.parse(ev.data)); } catch (_) {}
+      });
+      es.onerror = () => {
+        // Keep polling fallback active; EventSource auto-retries.
+      };
+    }
+
 // ---- button actions ----
 async function post(path) {
   const r = await fetch(path, { method: 'POST' });
   return r.json().catch(() => ({}));
 }
+      connectEvents();
 
 // ---- wire everything up ----
 document.addEventListener('DOMContentLoaded', () => {

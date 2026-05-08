@@ -67,7 +67,7 @@ a { color: #7daefc; }
   padding: .75rem; overflow: visible;
 }
 #switch-grid {
-  display: grid; grid-auto-flow: column;
+  display: grid; grid-auto-flow: row;
   gap: 6px; transform-origin: center center;
 }
 .sw-cell {

@@ -33,6 +33,10 @@ static ESP8266WebServer s_server(80);
 static cfg::Config*     s_cfg           = nullptr;
 static bool             s_reboot_pending = false;
 static uint32_t         s_reboot_at     = 0;
+static WiFiClient       s_sse_client;
+static bool             s_sse_active = false;
+static uint32_t         s_sse_last_code_bits = UINT32_MAX;
+static uint32_t         s_sse_last_push_ms = 0;
 
 // ---------------------------------------------------------------------------
 // Heap guard — reject requests if heap is dangerously low.
@@ -67,6 +71,22 @@ static void send_ok() {
 static void send_err(int code, const char* msg) {
     JsonDocument d; d["ok"] = false; d["error"] = msg;
     send_json(code, d);
+}
+
+static void sse_send_state(const char* event_name = "state") {
+    if (!s_sse_active || !s_sse_client.connected()) return;
+    JsonDocument doc;
+    appstate::build_state(*s_cfg, doc);
+    String body;
+    serializeJson(doc, body);
+
+    s_sse_client.print("event: ");
+    s_sse_client.print(event_name);
+    s_sse_client.print("\n");
+    s_sse_client.print("data: ");
+    s_sse_client.print(body);
+    s_sse_client.print("\n\n");
+    s_sse_last_push_ms = millis();
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +208,30 @@ static void handle_get_log() {
     send_json(200, doc);
 }
 
+static void handle_get_events() {
+    if (!heap_ok()) { send_err(503, "low heap"); return; }
+
+    if (s_sse_active && s_sse_client.connected()) {
+        s_sse_client.stop();
+    }
+
+    WiFiClient client = s_server.client();
+    client.setNoDelay(true);
+    client.print("HTTP/1.1 200 OK\r\n");
+    client.print("Content-Type: text/event-stream\r\n");
+    client.print("Cache-Control: no-cache\r\n");
+    client.print("Connection: keep-alive\r\n");
+    client.print("Access-Control-Allow-Origin: *\r\n\r\n");
+    client.print("retry: 1000\n\n");
+
+    s_sse_client = client;
+    s_sse_active = true;
+    s_sse_last_code_bits = UINT32_MAX;
+    s_sse_last_push_ms = 0;
+    sse_send_state("state");
+    pxlog::info(TAG, "SSE client connected");
+}
+
 static void handle_post_identify() {
     commands::identify();
     send_ok();
@@ -241,6 +285,7 @@ void begin(cfg::Config* c) {
     s_server.on("/api/config",        HTTP_POST, handle_post_config);
     s_server.on("/api/config/reset",  HTTP_POST, handle_post_config_reset);
     s_server.on("/api/state",         HTTP_GET,  handle_get_state);
+    s_server.on("/api/events",        HTTP_GET,  handle_get_events);
     s_server.on("/api/log",           HTTP_GET,  handle_get_log);
     s_server.on("/api/identify",      HTTP_POST, handle_post_identify);
     s_server.on("/api/reset",         HTTP_POST, handle_post_reset);
@@ -264,6 +309,24 @@ void loop() {
     }
 
     s_server.handleClient();
+
+    if (s_sse_active) {
+        if (!s_sse_client.connected()) {
+            s_sse_client.stop();
+            s_sse_active = false;
+            pxlog::info(TAG, "SSE client disconnected");
+        } else {
+            uint32_t now = millis();
+            uint32_t bits = 0;
+            bool have_code = appstate::get_code_snapshot(&bits, nullptr);
+            bool changed = have_code && (bits != s_sse_last_code_bits);
+            bool heartbeat = (now - s_sse_last_push_ms >= 2000);
+            if (changed || heartbeat) {
+                sse_send_state(changed ? "code_changed" : "state");
+                if (have_code) s_sse_last_code_bits = bits;
+            }
+        }
+    }
 
     if (s_reboot_pending && millis() >= s_reboot_at) {
         pxlog::info(TAG, "rebooting");
