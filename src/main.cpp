@@ -35,12 +35,25 @@ static inline void ota_mgr_loop()       {}   // Phase 4
 static inline void wifi_mgr_loop()      {}   // Phase 2
 
 // ---------------------------------------------------------------------------
+// Device configuration (loaded from LittleFS at boot)
+// ---------------------------------------------------------------------------
+
+cfg::Config g_config;
+
+// ---------------------------------------------------------------------------
 // Arduino entry points
 // ---------------------------------------------------------------------------
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=0-skeleton fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=1-config fw=%s", FW_VERSION);
+
+    bool cfg_was_invalid = false;
+    cfg::load(g_config, cfg_was_invalid);
+    if (cfg_was_invalid) {
+        pxlog::warn("main", "config_invalid: using built-in defaults");
+    }
+
     pxlog::info("main", "matrix_cells=%u cols=%u rows=%u",
                 MATRIX_NUM_CELLS, pins::NUM_COLS, pins::NUM_ROWS);
     pxlog::info("main", "i2c sda=%u scl=%u display_low=0x%02x display_high=0x%02x",

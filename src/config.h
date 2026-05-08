@@ -1,13 +1,14 @@
-// config.h — compile-time hardware constants for px-enigma-esp8266.
+// config.h — compile-time hardware constants and runtime Config for px-enigma-esp8266.
 //
 // Pin assignments reflect the existing wired units and must not change
 // without a hardware revision. See docs/pin-mapping.md for the full rationale
 // and the hardware-rework note regarding GPIO1 / GPIO3.
 //
-// The runtime configuration struct (cfg::Config) is added in Phase 1.
+// The cfg::Config struct mirrors docs/functional-spec.md §14.2.
 #pragma once
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 
 // ---------------------------------------------------------------------------
 // Pin assignments
@@ -82,3 +83,121 @@ constexpr uint32_t HEARTBEAT_INTERVAL_MS = 10000;
 
 constexpr size_t LOG_RING_LINES = 32;
 constexpr size_t LOG_LINE_MAX   = 160;
+
+// ---------------------------------------------------------------------------
+// Runtime configuration (schema: docs/functional-spec.md §14.2)
+// ---------------------------------------------------------------------------
+
+namespace cfg {
+
+// Number of signal-indicator RSSI threshold values.
+static constexpr size_t RSSI_THRESHOLDS = 7;
+
+// battery.profile string constants
+static constexpr char BATT_PROFILE_EXTERNAL[]    = "external";
+static constexpr char BATT_PROFILE_UNKNOWN[]     = "unknown";
+static constexpr char BATT_PROFILE_12V_LEAD[]    = "12v-lead-acid";
+static constexpr char BATT_PROFILE_12V_LIFEPO4[] = "12v-LiFePO4";
+static constexpr char BATT_PROFILE_6V_LEAD[]     = "6v-lead-acid";
+static constexpr char BATT_PROFILE_6V_LIFEPO4[]  = "6v-LiFePO4";
+static constexpr char BATT_PROFILE_CUSTOM[]      = "custom";
+
+// puzzle.mode string constants
+static constexpr char PUZZLE_MODE_LIVE[]     = "live";
+static constexpr char PUZZLE_MODE_LATCHING[] = "latching";
+
+// puzzle.start_state string constants
+static constexpr char START_STATE_ACTIVE[] = "active";
+static constexpr char START_STATE_OFF[]    = "off";
+
+struct WifiCreds {
+    String ssid;
+    String password;
+};
+
+struct Config {
+    // device
+    String prop_name;
+    String instance;
+
+    // wifi
+    WifiCreds wifi_primary;
+    WifiCreds wifi_backup;
+    String    ap_password;
+
+    // mqtt
+    String   mqtt_host;
+    uint16_t mqtt_port;
+    String   mqtt_username;
+    String   mqtt_password;
+    String   mqtt_base_topic;
+    String   mqtt_announce_topic;
+    uint32_t mqtt_heartbeat_interval_ms;
+
+    // puzzle
+    String   puzzle_mode;                 // PUZZLE_MODE_LIVE | PUZZLE_MODE_LATCHING
+    String   puzzle_target;               // "" when puzzle_has_target == false
+    bool     puzzle_has_target;           // true ↔ JSON target was non-null
+    uint32_t puzzle_identify_duration_ms;
+    String   puzzle_start_state;          // START_STATE_ACTIVE | START_STATE_OFF
+
+    // display
+    uint8_t display_brightness;           // 0..15 (HT16K33 native)
+
+    // signal_indicator
+    bool   signal_indicator_enabled;
+    int8_t signal_rssi_dbm[RSSI_THRESHOLDS];  // dBm thresholds (decreasing)
+
+    // battery
+    String   battery_profile;             // see BATT_PROFILE_* constants
+    String   battery_points;             // "" = null; else CSV string or JSON array as string
+    uint8_t  battery_low_percent;
+    uint8_t  battery_cutoff_percent;
+    uint8_t  battery_hysteresis_pct;
+    uint32_t battery_sample_interval_ms;
+    uint16_t battery_inactivity_minutes;
+    uint16_t battery_adc_at_0v_raw;
+    uint16_t battery_adc_at_full_v_raw;
+    float    battery_adc_full_v;
+
+    // scan
+    uint16_t scan_poll_interval_ms;
+    uint8_t  scan_debounce_samples;
+};
+
+// ---------------------------------------------------------------------------
+// Platform-independent (implemented in config_json.cpp)
+// ---------------------------------------------------------------------------
+
+// Fill c with the baked-in spec defaults. Call before from_json() for a clean load.
+void load_defaults(Config& c);
+
+// Merge doc into c (overlay semantics — missing keys keep their current value).
+// Returns false on any field validation failure; populates *err_out with the reason.
+bool from_json(Config& c, const JsonDocument& in, String* err_out = nullptr);
+
+// Serialize c to out (clears out first).
+void to_json(const Config& c, JsonDocument& out);
+
+// ---------------------------------------------------------------------------
+// Platform-dependent (implemented in config.cpp; use LittleFS + WiFi)
+// ---------------------------------------------------------------------------
+
+// Last 4 hex chars of the WiFi MAC address (e.g., "A1B2"). Needs WiFi stack up.
+String mac_suffix();
+
+// Mount LittleFS + load /config.json into c. On parse/schema failure: renames the
+// bad file to /config.bad.json, resets to defaults, sets was_invalid=true.
+// Always returns true — firmware is always usable after this call.
+bool load(Config& c, bool& was_invalid);
+
+// Persist c to /config.json. Returns true on success.
+bool save(const Config& c);
+
+// Remove /config.json and /config.bad.json.
+bool wipe();
+
+// Return true if GPIO0 is held LOW for hold_ms at boot (factory-reset trigger).
+bool factory_reset_requested(uint32_t hold_ms = 3000);
+
+} // namespace cfg
