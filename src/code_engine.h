@@ -24,6 +24,14 @@ namespace code_engine {
 // dst must be at least 9 bytes.
 void format_code(uint32_t code_int, char* dst);
 
+// Set display digit order as a 1-based permutation of [1..6].
+// Example [4,2,6,1,5,3] maps raw digits d1..d6 to display d4,d2,d6,d1,d5,d3.
+// Returns false if order is invalid.
+bool set_digit_order(const uint8_t order[6]);
+
+// Restore identity order [1,2,3,4,5,6].
+void reset_digit_order();
+
 // Parse a target string per functional-spec §5.4.
 //   Accepts: integer-as-string ("123456"), hyphenated ("12-34-56"), bare int.
 //   Returns the parsed 0..999999 value in *out.

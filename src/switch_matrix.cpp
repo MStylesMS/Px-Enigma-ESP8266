@@ -6,6 +6,21 @@
 
 namespace switch_matrix {
 
+void SwitchMatrix::reset_bit_map_identity() {
+    for (uint8_t i = 0; i < NUM_CELLS; ++i) bit_map_[i] = i;
+}
+
+bool SwitchMatrix::set_bit_map(const uint8_t bit_map[NUM_CELLS]) {
+    bool seen[NUM_CELLS] = {false};
+    for (uint8_t i = 0; i < NUM_CELLS; ++i) {
+        uint8_t v = bit_map[i];
+        if (v >= NUM_CELLS || seen[v]) return false;
+        seen[v] = true;
+    }
+    for (uint8_t i = 0; i < NUM_CELLS; ++i) bit_map_[i] = bit_map[i];
+    return true;
+}
+
 SwitchMatrix::SwitchMatrix()
     : io_(nullptr), debounce_(4), next_col_(0),
       s_state_(0), s_change_count_(0) {
@@ -13,6 +28,7 @@ SwitchMatrix::SwitchMatrix()
         cand_value_[i] = 0;
         cand_count_[i] = 0;
     }
+    reset_bit_map_identity();
 }
 
 void SwitchMatrix::begin(ScanIO& io, uint8_t debounce_samples) {
@@ -38,29 +54,30 @@ bool SwitchMatrix::tick() {
 
     bool flipped_any = false;
     for (uint8_t r = 0; r < NUM_ROWS; ++r) {
-        const uint8_t bit_i  = bit_index_for(col, r);
+        const uint8_t phys_i = bit_index_for(col, r);
+        const uint8_t bit_i  = bit_map_[phys_i];
         const uint8_t sample = (rows >> r) & 0x1;
 
-        if (sample == cand_value_[bit_i]) {
+        if (sample == cand_value_[phys_i]) {
             // Same candidate — accumulate, but never overflow.
-            if (cand_count_[bit_i] < 0xFF) cand_count_[bit_i]++;
+            if (cand_count_[phys_i] < 0xFF) cand_count_[phys_i]++;
         } else {
             // Candidate changed — restart the debounce window.
-            cand_value_[bit_i] = sample;
-            cand_count_[bit_i] = 1;
+            cand_value_[phys_i] = sample;
+            cand_count_[phys_i] = 1;
         }
 
-        if (cand_count_[bit_i] >= debounce_) {
+        if (cand_count_[phys_i] >= debounce_) {
             const uint8_t cur = (s_state_ >> bit_i) & 0x1;
-            if (cur != cand_value_[bit_i]) {
-                if (cand_value_[bit_i]) s_state_ |=  (1u << bit_i);
+            if (cur != cand_value_[phys_i]) {
+                if (cand_value_[phys_i]) s_state_ |=  (1u << bit_i);
                 else                    s_state_ &= ~(1u << bit_i);
                 s_change_count_++;
                 flipped_any = true;
             }
             // Cap the counter so a long-held cell doesn't accumulate forever
             // (purely defensive — debounce_ is small, so cap = 2*debounce_).
-            if (cand_count_[bit_i] > debounce_) cand_count_[bit_i] = debounce_;
+            if (cand_count_[phys_i] > debounce_) cand_count_[phys_i] = debounce_;
         }
     }
 

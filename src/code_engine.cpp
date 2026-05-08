@@ -9,18 +9,51 @@
 
 namespace code_engine {
 
+static uint8_t s_digit_order[6] = {1, 2, 3, 4, 5, 6};
+
+void reset_digit_order() {
+    for (uint8_t i = 0; i < 6; ++i) s_digit_order[i] = (uint8_t)(i + 1);
+}
+
+bool set_digit_order(const uint8_t order[6]) {
+    bool seen[6] = {false};
+    for (uint8_t i = 0; i < 6; ++i) {
+        uint8_t v = order[i];
+        if (v < 1 || v > 6 || seen[v - 1]) return false;
+        seen[v - 1] = true;
+    }
+    for (uint8_t i = 0; i < 6; ++i) s_digit_order[i] = order[i];
+    return true;
+}
+
+static uint32_t ordered_code_int(uint32_t code_int) {
+    char raw[7];
+    snprintf(raw, sizeof(raw), "%06u", (unsigned)(code_int % 1000000u));
+
+    char d[7];
+    for (uint8_t i = 0; i < 6; ++i) d[i] = raw[s_digit_order[i] - 1];
+    d[6] = '\0';
+    return (uint32_t)strtoul(d, nullptr, 10);
+}
+
+static void format_plain_code(uint32_t code_int, char* dst) {
+    uint32_t v = code_int % 1000000u;
+    uint32_t hi = v / 10000u;
+    uint32_t mid = (v / 100u) % 100u;
+    uint32_t lo  = v % 100u;
+    snprintf(dst, 9, "%02u-%02u-%02u",
+             (unsigned)hi, (unsigned)mid, (unsigned)lo);
+}
+
 // ---------------------------------------------------------------------------
 // Wire-format helpers
 // ---------------------------------------------------------------------------
 
 void format_code(uint32_t code_int, char* dst) {
-    // Clamp to 6 decimal digits.
-    uint32_t v = code_int % 1000000u;
-    uint32_t hi = v / 10000u;        //  0..99
-    uint32_t mid = (v / 100u) % 100u; //  0..99
-    uint32_t lo  = v % 100u;          //  0..99
-    snprintf(dst, 9, "%02u-%02u-%02u",
-             (unsigned)hi, (unsigned)mid, (unsigned)lo);
+    uint32_t v = ordered_code_int(code_int);
+    char d[7];
+    snprintf(d, sizeof(d), "%06u", (unsigned)v);
+    snprintf(dst, 9, "%c%c-%c%c-%c%c", d[0], d[1], d[2], d[3], d[4], d[5]);
 }
 
 // Remove all hyphens and spaces from `src`, write digits only to `out`.
@@ -85,7 +118,7 @@ void CodeEngine::begin(const char* mode_str, bool has_target, uint32_t target_in
 
     s_.has_target    = has_target;
     s_.target_int    = has_target ? (target_int % 1000000u) : 0u;
-    if (has_target) format_code(s_.target_int, s_.target_str);
+    if (has_target) format_plain_code(s_.target_int, s_.target_str);
     else             s_.target_str[0] = '\0';
 }
 
@@ -93,8 +126,8 @@ void CodeEngine::begin(const char* mode_str, bool has_target, uint32_t target_in
 
 void CodeEngine::fire_code_changed(uint32_t bits) {
     s_.code_bits = bits;
-    s_.code_int  = derive_code_int(bits);
-    format_code(s_.code_int, s_.code_str);
+    s_.code_int  = ordered_code_int(derive_code_int(bits));
+    format_code(derive_code_int(bits), s_.code_str);
 
     if (cb_.on_code_changed)
         cb_.on_code_changed(s_.code_int, s_.code_bits, s_.code_str, cb_.user);
@@ -139,7 +172,9 @@ void CodeEngine::tick(uint32_t matrix_bits) {
         return;
     }
 
-    uint32_t old_int = (old_bits == 0xFFFFFFFFu) ? 0xFFFFFFFFu : derive_code_int(old_bits);
+    uint32_t old_int = (old_bits == 0xFFFFFFFFu)
+                       ? 0xFFFFFFFFu
+                       : ordered_code_int(derive_code_int(old_bits));
     fire_code_changed(matrix_bits);
     check_target_match(old_int, s_.code_int);
 }
@@ -150,7 +185,7 @@ bool CodeEngine::set_target(bool has_target, uint32_t target_int) {
 
     s_.has_target = has_target;
     s_.target_int = has_target ? (target_int % 1000000u) : 0u;
-    if (has_target) format_code(s_.target_int, s_.target_str);
+    if (has_target) format_plain_code(s_.target_int, s_.target_str);
     else             s_.target_str[0] = '\0';
 
     // Re-evaluate solved/latched state against the new (or cleared) target.

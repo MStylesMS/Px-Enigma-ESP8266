@@ -146,15 +146,57 @@ Every confirmed switch-state change resets the inactivity timer (§7) so
 active play prevents deep sleep regardless of how many transitions
 occur.
 
+### 4.1 Simple mapping rules (developer hardware map)
+
+To make the puzzle harder to reverse-engineer, switch positions are mapped
+through a hardware map before the code number is calculated.
+
+Think of each switch as giving two small scores:
+
+- `A` score from its row
+- `B` score from its column
+
+Then we compute:
+
+```
+C = A + 5 * B
+value = 2^C
+```
+
+When more than one switch is ON, add all those values together.
+
+```
+N = sum(2^(A + 5*B) for each closed switch)
+```
+
+The scores come from `/switch_layout.json` using GPIO numbers as keys:
+
+- `row_gpio_to_a`
+- `col_gpio_to_b`
+
+The scanner GPIO pins do not change; only the math mapping changes.
+This keeps hardware wiring simple while letting the puzzle mapping stay
+custom per build.
+
 ---
 
 ## 5. Code engine
 
 ### 5.1 Displayed code derivation
 
-The displayed integer is `code_state mod 1,000,000`. The displayed
-*string* is the integer formatted as six decimal digits with leading
-zeros, separated into pairs by ASCII hyphens:
+The displayed integer starts from `code_state mod 1,000,000`.
+
+Then the 6 digits are reordered using `digit_order` from
+`/switch_layout.json` (a permutation of `[1,2,3,4,5,6]`).
+
+Example `digit_order = [4,2,6,1,5,3]`:
+
+```
+123456 -> 426153 -> "42-61-53"
+```
+
+Finally, the displayed *string* is formatted as six decimal digits with
+leading zeros, separated into pairs by ASCII hyphens:
 
 ```
 123456  →  "12-34-56"

@@ -102,6 +102,14 @@ public:
     // pending-sample counters.
     void force_state(uint32_t s) { s_state_ = s & ((1u << NUM_CELLS) - 1u); }
 
+    // Set a physical-cell -> logical-bit map. `bit_map[i]` gives the logical
+    // output bit index (0..NUM_CELLS-1) for physical cell i, where
+    // i = bit_index_for(col,row). Returns false if map is not a permutation.
+    bool set_bit_map(const uint8_t bit_map[NUM_CELLS]);
+
+    // Restore the identity map: physical cell i -> logical bit i.
+    void reset_bit_map_identity();
+
 private:
     ScanIO*  io_;
     uint8_t  debounce_;
@@ -113,6 +121,7 @@ private:
     // commits and (if different from the current debounced bit) flips it.
     uint8_t  cand_value_[NUM_CELLS];
     uint8_t  cand_count_[NUM_CELLS];
+    uint8_t  bit_map_[NUM_CELLS];
 
     uint32_t s_state_;
     uint32_t s_change_count_;
