@@ -4,6 +4,7 @@
 // Phase 1: verify cfg::Config defaults, JSON round-trip, field validation.
 // Phase 6: verify SwitchMatrix debounce, noise rejection, bit assignment.
 // Phase 7: code_engine formatter, target parser, live/latching state machines.
+// Phase 9b: battery_profiles built-in curves, custom parser, eval + resolve.
 //
 // config_json.cpp is included directly (test_build_src = false for native);
 // it has no LittleFS / WiFi / log dependencies.
@@ -16,6 +17,12 @@
 #include "../src/switch_matrix.cpp"
 #include "../src/code_engine.h"
 #include "../src/code_engine.cpp"
+
+// Phase 9b: battery_profiles (needs log.cpp to link pxlog symbols).
+#include "../src/log.h"
+#include "../src/log.cpp"
+#include "../src/battery_profiles.h"
+#include "../src/battery_profiles.cpp"
 
 // Provide the EspClass and SerialStub instances that Arduino.h declares extern.
 EspClass   ESP;
@@ -893,6 +900,160 @@ void test_battery_rssi_bars_disconnected() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 9b — battery_profiles: eval, built-in curves, custom parser, resolve
+// ---------------------------------------------------------------------------
+
+// ---- eval on 12v-lead-acid ----
+
+void test_profile_eval_12v_lead_acid_above_full() {
+    battery_profiles::Curve c;
+    bool ok = battery_profiles::load_builtin(cfg::BATT_PROFILE_12V_LEAD, c);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_TRUE(c.valid);
+    // Voltage above highest point → 100 %
+    TEST_ASSERT_EQUAL_INT(100, battery_profiles::eval(c, 13.5f));
+}
+
+void test_profile_eval_12v_lead_acid_below_empty() {
+    battery_profiles::Curve c;
+    battery_profiles::load_builtin(cfg::BATT_PROFILE_12V_LEAD, c);
+    // Voltage below lowest point → 0 %
+    TEST_ASSERT_EQUAL_INT(0, battery_profiles::eval(c, 10.0f));
+}
+
+void test_profile_eval_12v_lead_acid_midpoint_interpolation() {
+    battery_profiles::Curve c;
+    battery_profiles::load_builtin(cfg::BATT_PROFILE_12V_LEAD, c);
+    // Table: {12.85,100}, {12.65,90} — midpoint ~12.75 V → ~95 %
+    int pct = battery_profiles::eval(c, 12.75f);
+    TEST_ASSERT_INT_WITHIN(3, 95, pct);
+}
+
+void test_profile_eval_12v_lifepo4_full() {
+    battery_profiles::Curve c;
+    bool ok = battery_profiles::load_builtin(cfg::BATT_PROFILE_12V_LIFEPO4, c);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_INT(100, battery_profiles::eval(c, 14.5f));
+}
+
+void test_profile_eval_12v_lifepo4_empty() {
+    battery_profiles::Curve c;
+    battery_profiles::load_builtin(cfg::BATT_PROFILE_12V_LIFEPO4, c);
+    TEST_ASSERT_EQUAL_INT(0, battery_profiles::eval(c, 10.0f));
+}
+
+void test_profile_eval_external_always_100() {
+    // External profile → load_builtin returns true but Curve.valid = false.
+    // eval() on an invalid curve returns 100 (treat as always-powered).
+    battery_profiles::Curve c;
+    bool ok = battery_profiles::load_builtin(cfg::BATT_PROFILE_EXTERNAL, c);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_FALSE(c.valid);
+    TEST_ASSERT_EQUAL_INT(100, battery_profiles::eval(c, 0.0f));
+}
+
+// ---- custom curve parser ----
+
+void test_profile_parse_custom_csv_valid() {
+    // "v:p,v:p,..." form with 3 descending points.
+    battery_profiles::Curve c;
+    char err[64] = "";
+    bool ok = battery_profiles::parse_custom("12.5:100,12.0:50,11.5:0", c, err, sizeof(err));
+    TEST_ASSERT_TRUE_MESSAGE(ok, err);
+    TEST_ASSERT_TRUE(c.valid);
+    TEST_ASSERT_EQUAL_UINT8(3, c.count);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.5f, c.points[0].v);
+    TEST_ASSERT_EQUAL_UINT8(100, c.points[0].p);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 11.5f, c.points[2].v);
+    TEST_ASSERT_EQUAL_UINT8(0,   c.points[2].p);
+}
+
+void test_profile_parse_custom_json_array_valid() {
+    const char* json = "[{\"v\":12.5,\"p\":100},{\"v\":12.0,\"p\":50},{\"v\":11.5,\"p\":0}]";
+    battery_profiles::Curve c;
+    char err[64] = "";
+    bool ok = battery_profiles::parse_custom(json, c, err, sizeof(err));
+    TEST_ASSERT_TRUE_MESSAGE(ok, err);
+    TEST_ASSERT_TRUE(c.valid);
+    TEST_ASSERT_EQUAL_UINT8(3, c.count);
+}
+
+void test_profile_parse_custom_too_few_points() {
+    battery_profiles::Curve c;
+    char err[64] = "";
+    // Only 1 point — needs ≥ 2.
+    bool ok = battery_profiles::parse_custom("12.0:100", c, err, sizeof(err));
+    TEST_ASSERT_FALSE(ok);
+    TEST_ASSERT_FALSE(c.valid);
+}
+
+void test_profile_parse_custom_voltages_not_decreasing() {
+    battery_profiles::Curve c;
+    char err[64] = "";
+    // Voltages ascending → invalid.
+    bool ok = battery_profiles::parse_custom("11.0:100,12.0:50,13.0:0", c, err, sizeof(err));
+    TEST_ASSERT_FALSE(ok);
+    TEST_ASSERT_FALSE(c.valid);
+}
+
+void test_profile_parse_custom_percents_not_decreasing() {
+    battery_profiles::Curve c;
+    char err[64] = "";
+    // Percents ascending → invalid.
+    bool ok = battery_profiles::parse_custom("13.0:0,12.0:50,11.0:100", c, err, sizeof(err));
+    TEST_ASSERT_FALSE(ok);
+    TEST_ASSERT_FALSE(c.valid);
+}
+
+void test_profile_parse_custom_voltage_out_of_range() {
+    battery_profiles::Curve c;
+    char err[64] = "";
+    // Voltage 0.5 < 1.0 minimum.
+    bool ok = battery_profiles::parse_custom("0.5:100,0.2:0", c, err, sizeof(err));
+    TEST_ASSERT_FALSE(ok);
+    TEST_ASSERT_FALSE(c.valid);
+}
+
+void test_profile_resolve_builtin() {
+    cfg::Config cfg_val;
+    cfg::load_defaults(cfg_val);
+    cfg_val.battery_profile = cfg::BATT_PROFILE_12V_LEAD;
+    battery_profiles::Curve c;
+    battery_profiles::resolve(cfg_val, c);
+    TEST_ASSERT_TRUE(c.valid);
+}
+
+void test_profile_resolve_external_not_valid() {
+    cfg::Config cfg_val;
+    cfg::load_defaults(cfg_val);
+    cfg_val.battery_profile = cfg::BATT_PROFILE_EXTERNAL;
+    battery_profiles::Curve c;
+    battery_profiles::resolve(cfg_val, c);
+    TEST_ASSERT_FALSE(c.valid);  // external → caller uses 100 %
+}
+
+void test_profile_resolve_custom_valid_points() {
+    cfg::Config cfg_val;
+    cfg::load_defaults(cfg_val);
+    cfg_val.battery_profile = cfg::BATT_PROFILE_CUSTOM;
+    cfg_val.battery_points  = "12.5:100,12.0:50,11.5:0";
+    battery_profiles::Curve c;
+    battery_profiles::resolve(cfg_val, c);
+    TEST_ASSERT_TRUE(c.valid);
+    TEST_ASSERT_EQUAL_UINT8(3, c.count);
+}
+
+void test_profile_resolve_custom_invalid_fallback() {
+    cfg::Config cfg_val;
+    cfg::load_defaults(cfg_val);
+    cfg_val.battery_profile = cfg::BATT_PROFILE_CUSTOM;
+    cfg_val.battery_points  = "bad_data";  // unparseable
+    battery_profiles::Curve c;
+    battery_profiles::resolve(cfg_val, c);
+    TEST_ASSERT_FALSE(c.valid);  // bad parse → falls back to unknown
+}
+
+// ---------------------------------------------------------------------------
 
 int main() {
     UNITY_BEGIN();
@@ -965,5 +1126,22 @@ int main() {
     RUN_TEST(test_battery_rssi_bars_no_signal);
     RUN_TEST(test_battery_rssi_bars_partial);
     RUN_TEST(test_battery_rssi_bars_disconnected);
+    // Phase 9b — battery_profiles
+    RUN_TEST(test_profile_eval_12v_lead_acid_above_full);
+    RUN_TEST(test_profile_eval_12v_lead_acid_below_empty);
+    RUN_TEST(test_profile_eval_12v_lead_acid_midpoint_interpolation);
+    RUN_TEST(test_profile_eval_12v_lifepo4_full);
+    RUN_TEST(test_profile_eval_12v_lifepo4_empty);
+    RUN_TEST(test_profile_eval_external_always_100);
+    RUN_TEST(test_profile_parse_custom_csv_valid);
+    RUN_TEST(test_profile_parse_custom_json_array_valid);
+    RUN_TEST(test_profile_parse_custom_too_few_points);
+    RUN_TEST(test_profile_parse_custom_voltages_not_decreasing);
+    RUN_TEST(test_profile_parse_custom_percents_not_decreasing);
+    RUN_TEST(test_profile_parse_custom_voltage_out_of_range);
+    RUN_TEST(test_profile_resolve_builtin);
+    RUN_TEST(test_profile_resolve_external_not_valid);
+    RUN_TEST(test_profile_resolve_custom_valid_points);
+    RUN_TEST(test_profile_resolve_custom_invalid_fallback);
     return UNITY_END();
 }

@@ -56,3 +56,10 @@ struct SerialStub {
 };
 
 extern SerialStub Serial;
+
+// Analogue input stub.
+inline int analogRead(uint8_t) { return 0; }
+
+// Digital I/O stubs (used by battery_monitor and display_mgr; no-ops on host).
+inline void    pinMode(uint8_t, uint8_t) {}
+inline int     digitalRead(uint8_t)      { return 0; }

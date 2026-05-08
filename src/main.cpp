@@ -209,7 +209,9 @@ void loop() {
                           appstate::mqtt_connected(),
                           wifi_mgr::sta_rssi(),
                           g_config.signal_indicator_enabled,
-                          g_config.signal_rssi_dbm);
+                          g_config.signal_rssi_dbm,
+                          battery_monitor::status() == battery_monitor::Status::Low,
+                          battery_monitor::status() == battery_monitor::Status::Critical);
     }
     mqtt_mgr::loop();
     commands::tick();

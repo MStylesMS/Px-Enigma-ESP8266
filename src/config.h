@@ -69,6 +69,7 @@ constexpr uint8_t MATRIX_NUM_CELLS = pins::NUM_COLS * pins::NUM_ROWS;  // 20
 
 constexpr uint8_t  DISPLAY_BRIGHTNESS_DEFAULT  = 1;    // 0..15, HT16K33 native
 constexpr uint16_t DISPLAY_BLINK_HALF_PERIOD_MS = 500; // 1 Hz = 500 ms on, 500 ms off
+constexpr uint16_t LOW_BATT_BANNER_MS           = 3000; // §8.2: show "LOW" for ~3 s on entry
 constexpr uint32_t IDENTIFY_DURATION_MS         = 2000;
 
 // ---------------------------------------------------------------------------

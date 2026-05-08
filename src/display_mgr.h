@@ -33,10 +33,14 @@ void show_boot_code(const char* code_str);
 // Call this form when you have the config available in the loop.
 //   si_enabled      : from c.signal_indicator_enabled
 //   rssi_thresholds : from c.signal_rssi_dbm
+//   low_batt        : battery_monitor::status() == Status::Low
+//   crit_batt       : battery_monitor::status() == Status::Critical
 void tick(const char* code_str, bool latched, bool identify,
           bool is_off, bool mqtt_connected, int rssi_dbm,
           bool si_enabled,
-          const int8_t rssi_thresholds[cfg::RSSI_THRESHOLDS]);
+          const int8_t rssi_thresholds[cfg::RSSI_THRESHOLDS],
+          bool low_batt  = false,
+          bool crit_batt = false);
 
 // Update brightness immediately (called from setBrightness command).
 void set_brightness(uint8_t b);

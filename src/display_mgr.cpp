@@ -51,6 +51,12 @@ static bool     s_last_identify   = false;
 static bool     s_last_is_off     = false;
 static bool     s_last_mqtt_conn  = false;
 static int      s_last_rssi       = 1;     // 1 = "not yet set"
+static bool     s_last_low_batt   = false;
+static bool     s_last_crit_batt  = false;
+
+// LOW_BATT banner: show "LOW " on display_lo for ~3 s then resume code.
+static uint32_t s_low_banner_until_ms = 0;
+static bool     s_low_banner_active   = false;
 
 // ---------------------------------------------------------------------------
 // I2C probe
@@ -68,13 +74,13 @@ static bool i2c_probe(uint8_t addr) {
 static const uint8_t SEG_DASH  = 0x40;
 static const uint8_t SEG_BLANK = 0x00;
 static const uint8_t SEG_8     = 0x7F; // all segments on (includes dp)
-// 7-segment bitmasks for C, R, I, T, L, O, W  (for "CRIT", "LOW" banners)
-// Defined for Phase 9b/9c completeness; not used in Phase 9.
+// 7-segment bitmasks for C, R, I, T, L, O, W  (for "CRIT", "LOW" banners).
 static const uint8_t SEG_C = 0x39;
 static const uint8_t SEG_R = 0x50;
 static const uint8_t SEG_I = 0x06;
 static const uint8_t SEG_T = 0x78;
 static const uint8_t SEG_L = 0x38;
+static const uint8_t SEG_O = 0x3F;
 static const uint8_t SEG_W = 0x3E;
 
 // Write 5 raw bytes to a display (positions 0,1,3,4 are digits; 2 is colon).
@@ -90,6 +96,29 @@ static void write_raw(Adafruit_7segment& d,
 
 static void blank_display(Adafruit_7segment& d) {
     write_raw(d, SEG_BLANK, SEG_BLANK, SEG_BLANK, SEG_BLANK);
+}
+
+// Renders "CRIT" across display_high (right half) — spec §8.2.
+// display_high positions: [0]=C [1]=R [3]=I [4]=T
+static void render_crit() {
+    if (s_lo_ok) blank_display(s_lo);
+    if (s_hi_ok) {
+        write_raw(s_hi, SEG_C, SEG_R, SEG_I, SEG_T);
+    }
+}
+
+// Renders "LOW " — L on display_lo pos 0, O on pos 1,
+// W on display_hi pos 0, rest blank.
+static void render_low() {
+    if (s_lo_ok) {
+        s_lo.writeDigitRaw(0, SEG_L);
+        s_lo.writeDigitRaw(1, SEG_O);
+        s_lo.writeDigitRaw(2, 0);
+        s_lo.writeDigitRaw(3, SEG_W);
+        s_lo.writeDigitRaw(4, SEG_BLANK);
+        s_lo.writeDisplay();
+    }
+    if (s_hi_ok) blank_display(s_hi);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +270,8 @@ void set_brightness(uint8_t b) {
 void tick(const char* code_str, bool latched, bool identify,
           bool is_off, bool mqtt_connected, int rssi_dbm,
           bool si_enabled,
-          const int8_t rssi_thresholds[cfg::RSSI_THRESHOLDS]) {
+          const int8_t rssi_thresholds[cfg::RSSI_THRESHOLDS],
+          bool low_batt, bool crit_batt) {
 
     uint32_t now = millis();
 
@@ -258,6 +288,40 @@ void tick(const char* code_str, bool latched, bool identify,
         // Identify just ended — force a full redraw below.
         s_last_identify = false;
         s_last_code[0]  = '\0';
+    }
+
+    // ---- CRIT_BATT: "CRIT" banner, continuous ----
+    if (crit_batt) {
+        if (!s_last_crit_batt) {
+            s_last_crit_batt = true;
+            s_last_code[0]   = '\0';   // force redraw on recovery
+            render_crit();
+        }
+        return;
+    }
+    if (s_last_crit_batt) {
+        s_last_crit_batt = false;
+        s_last_code[0]   = '\0';
+    }
+
+    // ---- LOW_BATT: "LOW " banner for ~3 s on entry, then resume ----
+    if (low_batt && !s_last_low_batt) {
+        // Transition into LOW_BATT — start the banner timer.
+        s_last_low_batt       = true;
+        s_low_banner_until_ms = now + LOW_BATT_BANNER_MS;
+        s_low_banner_active   = true;
+        render_low();
+        return;
+    }
+    if (!low_batt) s_last_low_batt = false;
+    if (s_low_banner_active) {
+        if ((int32_t)(now - s_low_banner_until_ms) >= 0) {
+            // Banner expired — fall through to normal code rendering.
+            s_low_banner_active = false;
+            s_last_code[0]      = '\0';   // force redraw
+        } else {
+            return;   // still showing banner
+        }
     }
 
     // ---- OFF: blank both displays ----

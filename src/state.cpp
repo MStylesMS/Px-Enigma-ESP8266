@@ -86,16 +86,18 @@ void build_state(const cfg::Config& c, JsonDocument& out) {
     disp["blanked"]          = false;
     disp["signal_indicator"] = c.signal_indicator_enabled;
 
-    // Battery (Phase 9: voltage + raw ADC; percent/curves Phase 9b).
+    // Battery (Phase 9b: percent + status wired from battery_monitor).
     JsonObject batt = out["battery"].to<JsonObject>();
-    batt["profile"]   = c.battery_profile;
+    batt["profile"]  = c.battery_profile;
     float v = battery_monitor::voltage_v();
     if (!isnan(v)) batt["voltage_v"] = v;
     else           batt["voltage_v"] = nullptr;
     batt["raw_a0"]  = (battery_monitor::raw_adc() >= 0)
                       ? (int)battery_monitor::raw_adc() : (int)0;
-    batt["percent"] = nullptr;    // Phase 9b
-    batt["status"]  = "ok";       // Phase 9b will manage LOW_BATT / CRIT_BATT
+    int pct = battery_monitor::percent();
+    if (pct >= 0 && !battery_monitor::is_external()) batt["percent"] = pct;
+    else                                              batt["percent"] = nullptr;
+    batt["status"]  = battery_monitor::status_str(battery_monitor::status());
 
     JsonObject sleep = out["sleep"].to<JsonObject>();
     sleep["inactivity_minutes"] = c.battery_inactivity_minutes;
