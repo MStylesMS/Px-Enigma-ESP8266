@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" width="160" height="40">
-  <!-- Placeholder — replace with your actual Paradox logo asset.
-       Recommend: SVG, height 32–48 px, transparent background. -->
-  <rect x="0" y="0" width="160" height="40" rx="4" fill="#1c1f24"/>
-  <text x="8" y="28"
-        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
-        font-size="22" font-weight="700" letter-spacing="1"
-        fill="#3766c2">PARADOX</text>
-</svg>
