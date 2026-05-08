@@ -145,7 +145,8 @@ void CodeEngine::tick(uint32_t matrix_bits) {
 }
 
 bool CodeEngine::set_target(bool has_target, uint32_t target_int) {
-    uint32_t old_int = s_.code_int;
+    uint32_t cur_int = s_.code_int;
+    bool was_solved  = s_.solved;
 
     s_.has_target = has_target;
     s_.target_int = has_target ? (target_int % 1000000u) : 0u;
@@ -168,15 +169,22 @@ bool CodeEngine::set_target(bool has_target, uint32_t target_int) {
         if (cb_.on_unlatch) cb_.on_unlatch(cb_.user);
     }
 
-    // Re-check match with the current code.
+    bool now_matched = (cur_int == s_.target_int);
+
+    // Spec §11.2: setTarget "emits code_solved (live) or solve (latching)
+    // immediately if the current code already matches."
     if (s_.mode == Mode::Live) {
-        bool now_matched = (old_int == s_.target_int);
         s_.solved = now_matched;
-        // Don't fire solved/unsolved callbacks here — target updates are
-        // not transitions in the same sense as code changes; the next tick()
-        // with an unchanged matrix will not re-evaluate (prev_bits unchanged).
-        // The caller (MQTT command handler) publishes a fresh state, which is
-        // sufficient.
+        if (now_matched && !was_solved) {
+            if (cb_.on_code_solved)
+                cb_.on_code_solved(s_.code_int, s_.code_bits, s_.code_str, cb_.user);
+        }
+    } else { // Latching
+        if (now_matched) {
+            s_.latched = true;
+            if (cb_.on_solve)
+                cb_.on_solve(s_.code_int, s_.code_bits, s_.code_str, cb_.user);
+        }
     }
     return true;
 }

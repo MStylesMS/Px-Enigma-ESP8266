@@ -677,6 +677,63 @@ void test_engine_derive_code_int_wraps() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 8 — setTarget event semantics (spec §11.2)
+// ---------------------------------------------------------------------------
+
+void test_engine_set_target_live_immediate_match_fires_solved() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", false, 0, make_callbacks());
+    eng.tick(42u);              // current code = 42, no target
+    int before = g_evlog.solved;
+    eng.set_target(true, 42u);  // immediate match
+    TEST_ASSERT_EQUAL_INT(before + 1, g_evlog.solved);
+    TEST_ASSERT_TRUE(eng.state().solved);
+}
+
+void test_engine_set_target_live_immediate_no_match_no_event() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", false, 0, make_callbacks());
+    eng.tick(42u);
+    eng.set_target(true, 99u);
+    TEST_ASSERT_EQUAL_INT(0, g_evlog.solved);
+    TEST_ASSERT_FALSE(eng.state().solved);
+}
+
+void test_engine_set_target_live_already_solved_no_duplicate_event() {
+    // If already solved against the old target and the new target also
+    // matches, no duplicate code_solved event.
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", true, 42u, make_callbacks());
+    eng.tick(42u);              // fires code_solved (solved=true)
+    int before = g_evlog.solved;
+    eng.set_target(true, 42u);  // identical target — no new transition
+    TEST_ASSERT_EQUAL_INT(before, g_evlog.solved);
+}
+
+void test_engine_set_target_latching_immediate_match_fires_solve() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("latching", false, 0, make_callbacks());
+    eng.tick(123u);                 // code=123, no target
+    eng.set_target(true, 123u);     // immediate match → latch
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.solve);
+    TEST_ASSERT_TRUE(eng.state().latched);
+}
+
+void test_engine_set_target_latching_no_match_no_solve() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("latching", false, 0, make_callbacks());
+    eng.tick(5u);
+    eng.set_target(true, 6u);
+    TEST_ASSERT_EQUAL_INT(0, g_evlog.solve);
+    TEST_ASSERT_FALSE(eng.state().latched);
+}
+
+// ---------------------------------------------------------------------------
 
 int main() {
     UNITY_BEGIN();
@@ -733,5 +790,11 @@ int main() {
     RUN_TEST(test_engine_set_target_clears_latch_with_unlatch);
     RUN_TEST(test_engine_set_target_null_clears_solved);
     RUN_TEST(test_engine_derive_code_int_wraps);
+    // Phase 8 — setTarget immediate-match event semantics
+    RUN_TEST(test_engine_set_target_live_immediate_match_fires_solved);
+    RUN_TEST(test_engine_set_target_live_immediate_no_match_no_event);
+    RUN_TEST(test_engine_set_target_live_already_solved_no_duplicate_event);
+    RUN_TEST(test_engine_set_target_latching_immediate_match_fires_solve);
+    RUN_TEST(test_engine_set_target_latching_no_match_no_solve);
     return UNITY_END();
 }

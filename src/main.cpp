@@ -79,7 +79,7 @@ static void matrix_tick() {
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=7-code fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=8-mqtt fw=%s", FW_VERSION);
 
     bool cfg_was_invalid = false;
     cfg::load(g_config, cfg_was_invalid);
@@ -88,27 +88,59 @@ void setup() {
         mqtt_mgr::note_config_invalid_pending();
     }
 
-    commands::begin(&g_config);
+    commands::begin(&g_config, &g_engine);
     g_matrix.begin(switch_matrix::esp_scan_io(), g_config.scan_debounce_samples);
 
     // Code engine: wire callbacks to MQTT event publishers.
     {
         code_engine::Callbacks cb;
         cb.user = nullptr;
-        cb.on_code_changed = [](uint32_t, uint32_t, const char*, void*) {
-            // Phase 8: publish code_changed event here.
+        cb.on_code_changed = [](uint32_t code_int, uint32_t code_bits,
+                                const char* code_str, void*) {
+            JsonDocument d;
+            d["code"]      = code_str;
+            d["code_int"]  = code_int;
+            d["code_bits"] = code_bits;
+            mqtt_mgr::publish_event("code", "code_changed", nullptr,
+                                    d.as<JsonVariantConst>());
         };
-        cb.on_code_solved = [](uint32_t, uint32_t, const char*, void*) {
-            // Phase 8: publish code_solved event.
+        cb.on_code_solved = [](uint32_t /*code_int*/, uint32_t /*code_bits*/,
+                               const char* code_str, void*) {
+            JsonDocument d;
+            d["code"]   = code_str;
+            d["target"] = g_engine.state().target_str;
+            mqtt_mgr::publish_event("code", "code_solved",
+                                    "code matches target",
+                                    d.as<JsonVariantConst>());
+            mqtt_mgr::publish_state();
         };
-        cb.on_code_unsolved = [](uint32_t, uint32_t, const char*, void*) {
-            // Phase 8: publish code_unsolved event.
+        cb.on_code_unsolved = [](uint32_t /*code_int*/, uint32_t /*code_bits*/,
+                                 const char* code_str, void*) {
+            JsonDocument d;
+            d["code"]   = code_str;
+            d["target"] = g_engine.state().target_str;
+            mqtt_mgr::publish_event("code", "code_unsolved",
+                                    "code no longer matches target",
+                                    d.as<JsonVariantConst>());
+            mqtt_mgr::publish_state();
         };
-        cb.on_solve = [](uint32_t, uint32_t, const char*, void*) {
-            // Phase 8: publish solve event.
+        cb.on_solve = [](uint32_t /*code_int*/, uint32_t /*code_bits*/,
+                         const char* code_str, void*) {
+            JsonDocument d;
+            d["code"]   = code_str;
+            d["target"] = g_engine.state().target_str;
+            mqtt_mgr::publish_event("code", "solve",
+                                    "puzzle solved (latched)",
+                                    d.as<JsonVariantConst>());
+            mqtt_mgr::publish_state();
         };
         cb.on_unlatch = [](void*) {
-            // Phase 8: publish unlatch event.
+            JsonDocument d;
+            d["code"] = g_engine.state().code_str;
+            mqtt_mgr::publish_event("code", "unlatch",
+                                    "latch cleared",
+                                    d.as<JsonVariantConst>());
+            mqtt_mgr::publish_state();
         };
         uint32_t target_int = 0;
         bool has_target = g_config.puzzle_has_target;

@@ -1,4 +1,9 @@
-// commands.cpp — Phase 5: workspace-required commands only.
+// commands.cpp — Phase 5 + Phase 8 command dispatcher.
+// Phase 5: workspace-required commands (ping, getState, identify, restart,
+//          reloadConfig).
+// Phase 8: project commands per spec §11.2 (setBrightness, setTarget,
+//          clearTarget, setMode, reset, getCode, setBatteryProfile,
+//          setSignalIndicator, on, off).
 #include "commands.h"
 #include "log.h"
 #include "mqtt_mgr.h"
@@ -11,11 +16,13 @@ namespace commands {
 static const char* TAG = "cmd";
 
 static cfg::Config* s_cfg = nullptr;
+static code_engine::CodeEngine* s_engine = nullptr;
 
 static bool     s_identify_active = false;
 static uint32_t s_identify_until  = 0;
 static bool     s_restart_pending = false;
 static uint32_t s_restart_at      = 0;
+static bool     s_off             = false;
 
 // ---------------------------------------------------------------------------
 // Outcome event helpers (spec §11.4)
@@ -45,7 +52,10 @@ static void publish_outcome(const char* outcome, const char* command,
 // Local actions
 // ---------------------------------------------------------------------------
 
-void begin(cfg::Config* c) { s_cfg = c; }
+void begin(cfg::Config* c, code_engine::CodeEngine* engine) {
+    s_cfg = c;
+    s_engine = engine;
+}
 
 void identify() {
     s_identify_active = true;
@@ -61,6 +71,8 @@ void schedule_restart(uint32_t delay_ms) {
     s_restart_at = millis() + delay_ms;
     pxlog::warn(TAG, "restart scheduled in %u ms", (unsigned)delay_ms);
 }
+
+bool is_off() { return s_off; }
 
 void tick() {
     uint32_t now = millis();
@@ -155,6 +167,188 @@ void handle_command_payload(const uint8_t* payload, size_t len) {
                         was_invalid ? "config_invalid" : nullptr,
                         data.as<JsonVariantConst>());
         // Echo a fresh state so subscribers see the reverted values.
+        mqtt_mgr::publish_state();
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 8 — project commands
+    // -----------------------------------------------------------------------
+
+    auto fail_no_init = [&](){
+        publish_outcome("command_failed", cmd, req, "not_initialised",
+                        JsonVariantConst());
+    };
+    auto fail_invalid_arg = [&](const char* field){
+        JsonDocument data; data["field"] = field;
+        publish_outcome("command_failed", cmd, req, "invalid_argument",
+                        data.as<JsonVariantConst>());
+    };
+
+    if (!strcmp(cmd, "setBrightness")) {
+        if (!s_cfg) { fail_no_init(); return; }
+        if (!doc["brightness"].is<int>()) { fail_invalid_arg("brightness"); return; }
+        int b = doc["brightness"].as<int>();
+        if (b < 0 || b > 15) { fail_invalid_arg("brightness"); return; }
+        bool persist = doc["persist"] | true;
+        s_cfg->display_brightness = (uint8_t)b;
+        if (persist) cfg::save(*s_cfg);
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        mqtt_mgr::publish_state();
+        return;
+    }
+
+    if (!strcmp(cmd, "setTarget")) {
+        if (!s_cfg || !s_engine) { fail_no_init(); return; }
+        // Accept null target (== clearTarget) per spec §11.2.
+        if (doc["target"].isNull()) {
+            s_engine->set_target(false, 0);
+            s_cfg->puzzle_has_target = false;
+            s_cfg->puzzle_target = "";
+            cfg::save(*s_cfg);
+            publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+            mqtt_mgr::publish_state();
+            return;
+        }
+        const char* tgt_s = doc["target"] | (const char*)nullptr;
+        if (!tgt_s) { fail_invalid_arg("target"); return; }
+        uint32_t tgt = 0;
+        if (!code_engine::parse_target(tgt_s, &tgt)) {
+            JsonDocument data; data["field"] = "target"; data["value"] = tgt_s;
+            publish_outcome("command_failed", cmd, req, "invalid_code_format",
+                            data.as<JsonVariantConst>());
+            return;
+        }
+        s_engine->set_target(true, tgt);
+        // Persist canonical "XX-YY-ZZ" form (matches spec §5.4).
+        char buf[9];
+        code_engine::format_code(tgt, buf);
+        s_cfg->puzzle_has_target = true;
+        s_cfg->puzzle_target = buf;
+        cfg::save(*s_cfg);
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        mqtt_mgr::publish_state();
+        return;
+    }
+
+    if (!strcmp(cmd, "clearTarget")) {
+        if (!s_cfg || !s_engine) { fail_no_init(); return; }
+        s_engine->set_target(false, 0);
+        s_cfg->puzzle_has_target = false;
+        s_cfg->puzzle_target = "";
+        cfg::save(*s_cfg);
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        mqtt_mgr::publish_state();
+        return;
+    }
+
+    if (!strcmp(cmd, "setMode")) {
+        if (!s_cfg || !s_engine) { fail_no_init(); return; }
+        const char* m = doc["mode"] | (const char*)nullptr;
+        if (!m) { fail_invalid_arg("mode"); return; }
+        code_engine::Mode new_mode;
+        if      (!strcmp(m, cfg::PUZZLE_MODE_LIVE))     new_mode = code_engine::Mode::Live;
+        else if (!strcmp(m, cfg::PUZZLE_MODE_LATCHING)) new_mode = code_engine::Mode::Latching;
+        else { fail_invalid_arg("mode"); return; }
+        s_engine->set_mode(new_mode);
+        s_cfg->puzzle_mode = m;
+        cfg::save(*s_cfg);
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        mqtt_mgr::publish_state();
+        return;
+    }
+
+    if (!strcmp(cmd, "reset")) {
+        if (!s_engine) { fail_no_init(); return; }
+        s_engine->reset();
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        mqtt_mgr::publish_state();
+        return;
+    }
+
+    if (!strcmp(cmd, "getCode")) {
+        if (!s_engine) { fail_no_init(); return; }
+        const auto& s = s_engine->state();
+        JsonDocument data;
+        data["code"]      = s.code_str;
+        data["code_int"]  = s.code_int;
+        data["code_bits"] = s.code_bits;
+        mqtt_mgr::publish_event("code", "code_changed", nullptr,
+                                data.as<JsonVariantConst>());
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        return;
+    }
+
+    if (!strcmp(cmd, "setBatteryProfile")) {
+        if (!s_cfg) { fail_no_init(); return; }
+        const char* p = doc["profile"] | (const char*)nullptr;
+        if (!p) { fail_invalid_arg("profile"); return; }
+        // Accept the seven spec'd profile names.
+        bool known =
+            !strcmp(p, cfg::BATT_PROFILE_EXTERNAL)    ||
+            !strcmp(p, cfg::BATT_PROFILE_UNKNOWN)     ||
+            !strcmp(p, cfg::BATT_PROFILE_12V_LEAD)    ||
+            !strcmp(p, cfg::BATT_PROFILE_12V_LIFEPO4) ||
+            !strcmp(p, cfg::BATT_PROFILE_6V_LEAD)     ||
+            !strcmp(p, cfg::BATT_PROFILE_6V_LIFEPO4)  ||
+            !strcmp(p, cfg::BATT_PROFILE_CUSTOM);
+        if (!known) { fail_invalid_arg("profile"); return; }
+        s_cfg->battery_profile = p;
+        // `points` field accepted as opaque string for now (full curve
+        // validation lands in Phase 9b). Accept either string or array form.
+        if (!doc["points"].isNull()) {
+            if (doc["points"].is<const char*>()) {
+                s_cfg->battery_points = doc["points"].as<const char*>();
+            } else if (doc["points"].is<JsonArrayConst>()) {
+                String s; serializeJson(doc["points"], s);
+                s_cfg->battery_points = s;
+            }
+        }
+        cfg::save(*s_cfg);
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        mqtt_mgr::publish_state();
+        return;
+    }
+
+    if (!strcmp(cmd, "setSignalIndicator")) {
+        if (!s_cfg) { fail_no_init(); return; }
+        if (!doc["enabled"].is<bool>()) { fail_invalid_arg("enabled"); return; }
+        s_cfg->signal_indicator_enabled = doc["enabled"].as<bool>();
+        if (doc["rssi_dbm"].is<JsonArrayConst>()) {
+            JsonArrayConst arr = doc["rssi_dbm"].as<JsonArrayConst>();
+            if (arr.size() != cfg::RSSI_THRESHOLDS) {
+                fail_invalid_arg("rssi_dbm"); return;
+            }
+            // Must be strictly decreasing and within int8 range.
+            int8_t tmp[cfg::RSSI_THRESHOLDS];
+            int prev = 0;
+            size_t i = 0;
+            for (JsonVariantConst v : arr) {
+                if (!v.is<int>()) { fail_invalid_arg("rssi_dbm"); return; }
+                int n = v.as<int>();
+                if (n < -127 || n > 0) { fail_invalid_arg("rssi_dbm"); return; }
+                if (i > 0 && n >= prev) { fail_invalid_arg("rssi_dbm"); return; }
+                tmp[i++] = (int8_t)n;
+                prev = n;
+            }
+            for (size_t j = 0; j < cfg::RSSI_THRESHOLDS; ++j)
+                s_cfg->signal_rssi_dbm[j] = tmp[j];
+        }
+        cfg::save(*s_cfg);
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        mqtt_mgr::publish_state();
+        return;
+    }
+
+    if (!strcmp(cmd, "on")) {
+        s_off = false;
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
+        mqtt_mgr::publish_state();
+        return;
+    }
+    if (!strcmp(cmd, "off")) {
+        s_off = true;
+        publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
         mqtt_mgr::publish_state();
         return;
     }
