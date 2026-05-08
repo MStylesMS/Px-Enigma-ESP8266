@@ -68,9 +68,11 @@ The prop runs in one of two **puzzle modes** (configurable in the Web
 UI under **Puzzle**):
 
 - **Live (default).** The displayed code always tracks the switches.
-  Crossing the target boundary publishes `code_solved` (entering match)
-  and `code_unsolved` (leaving match). Players can solve and unsolve
-  freely.
+  If a target is set, a `code_solved` event fires each time the code
+  enters the matching state. If players change switches away from the
+  target a `code_unsolved` event fires; solving again fires a fresh
+  `code_solved`. There is no single-shot guard — solve and unsolve
+  events repeat as often as players cross the boundary.
 - **Latching.** When the code first matches the target, the prop
   publishes a single `solve` event, **freezes** the matched code on
   the display (blinking at 1 Hz so it's clearly the answer), and
@@ -287,8 +289,15 @@ battery.
 
 ### Optional WiFi / MQTT signal indicator
 
-With **Display → Signal indicator** enabled, the seven decimal-point
-lamps on the displays light to show:
+Toggle this feature under **Display → Signal indicator** in the Web UI.
+The setting is stored in `data/config.json` and persists across reboots.
+You can also toggle it at runtime via MQTT:
+
+```json
+{ "command": "setSignalIndicator", "enabled": true }
+```
+
+When enabled, the seven decimal-point lamps on the displays light to show:
 
 - Dots 0–6 (left to right): STA RSSI as a 0–7 bar (5 dB steps; full
   scale at ≥ −55 dBm, dark below −85 dBm or when STA is disconnected).
@@ -296,6 +305,10 @@ lamps on the displays light to show:
 
 The `XX-YY-ZZ` digits are unaffected. Dots are suppressed during
 `identify`, the `LOW_BATT` banner, and `CRIT_BATT`.
+
+The 7 RSSI threshold values default to 5 dBm steps (−55 to −85) and
+can be fine-tuned in `data/config.json` (shown read-only in the Web
+UI diagnostics panel).
 
 ### Standalone (no-network) operation
 

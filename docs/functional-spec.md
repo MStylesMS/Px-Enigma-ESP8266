@@ -169,9 +169,14 @@ The mode is a configuration value and may be changed at runtime via
 #### `live` mode (default)
 
 - Every confirmed code change publishes a `code_changed` event.
-- If `code.target` is set, transitions across the match boundary
-  publish `code_solved` (entering match) and `code_unsolved` (leaving
-  match).
+- If `code.target` is set, every transition across the match boundary
+  publishes an event:
+  - **unmatched → matched:** `code_solved` — emitted every time the
+    code enters the matching state, including after it has been solved,
+    changed away, and re-solved. There is no single-shot guard;
+    `code_solved` fires on each individual solve transition.
+  - **matched → unmatched:** `code_unsolved` — emitted every time the
+    code leaves the matching state.
 - The display always reflects the live matrix state.
 
 #### `latching` mode
@@ -403,15 +408,28 @@ first lit code: ≤ 1.5 s on healthy hardware.
 
 ### 8.4 Optional WiFi/MQTT signal indicator
 
-When `signal_indicator.enabled` is `true`, the firmware lights the
-HT16K33 decimal-point lamps to indicate connectivity. The `XX-YY-ZZ`
-glyph field always uses 8 digit positions (6 numeric + 2 dashes); only
-the decimal-point lamps are repurposed.
+`signal_indicator.enabled` controls whether the decimal-point lamps
+are used to show network health. The setting is:
+
+- **Stored in** `data/config.json` (persisted across reboots).
+- **Editable via** the Web UI under **Display → Signal indicator**.
+- Changeable at runtime via the `setSignalIndicator` MQTT command.
+
+When enabled, the firmware lights the HT16K33 decimal-point lamps to
+indicate connectivity. The `XX-YY-ZZ` glyph field always uses 8 digit
+positions (6 numeric + 2 dashes); only the decimal-point lamps are
+repurposed.
 
 - Decimal points 0..6 (left-to-right) indicate STA RSSI as a 0–7 bar.
 - Decimal point 7 (rightmost) indicates MQTT broker connectivity.
 
-Default RSSI thresholds (configurable as `signal_indicator.rssi_dbm`):
+The 7 RSSI threshold values (`signal_indicator.rssi_dbm`) are stored
+in `data/config.json` and are **not** editable in the Web UI (they are
+advanced calibration values shown read-only in the diagnostics panel).
+The defaults match the table below and are suitable for most
+installations.
+
+Default RSSI thresholds:
 
 | Lit dots | RSSI (dBm) |
 |---|---|

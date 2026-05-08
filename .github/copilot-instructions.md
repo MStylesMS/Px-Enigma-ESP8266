@@ -75,8 +75,14 @@ renderer reads from `code_engine`; it never owns puzzle state.
   generates defaults at boot — **do not flash placeholder credentials**.
 - **Config visibility.** Calibration constants, custom-curve points,
   scan timing (`scan.poll_interval_ms`, `scan.debounce_samples`), and
-  RSSI thresholds live in `data/config.json` only and are **not** editable
-  in the Web UI. The UI shows their current values read-only.
+  RSSI thresholds (`signal_indicator.rssi_dbm`) live in `data/config.json`
+  only and are **not** editable in the Web UI. The UI shows their current
+  values read-only. `signal_indicator.enabled` IS Web-UI editable and
+  is stored in `data/config.json` like any other user-facing field.
+- **Live-mode solve events are not single-shot.** `code_solved` fires
+  every time the code transitions from unmatched → matched; `code_unsolved`
+  fires every time matched → unmatched. There is no "already solved" guard
+  in live mode. Only latching mode uses a single-shot `solve` event.
 - **Logging:** use `pxlog::info(tag, fmt, ...)` etc. — never `Serial.print*`
   directly outside `log.cpp`. Serial output is best-effort; GPIO1/3 are reused
   by the matrix scanner (see hardware spec).
