@@ -108,3 +108,12 @@ pio device monitor        # serial console
 - [Pin mapping](docs/pin-mapping.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [User guide](docs/user-guide.md)
+
+## License
+
+Dual-licensed:
+
+- **AGPL-3.0** for open source use — see [LICENSE](LICENSE).
+- **Commercial license required** for proprietary or revenue-generating use that does not comply with AGPL-3.0 — see [COMMERCIAL.md](COMMERCIAL.md).
+
+Copyright © 2026 Mark Stevens.

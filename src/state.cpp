@@ -9,9 +9,11 @@ namespace appstate {
 
 static uint32_t s_min_free_heap_bytes = UINT32_MAX;
 static bool     s_mqtt_connected      = false;
+static const code_engine::CodeState* s_code_state = nullptr;
 
 void reset_heap_watermark() { s_min_free_heap_bytes = UINT32_MAX; }
 void set_mqtt_connected(bool v) { s_mqtt_connected = v; }
+void set_code_state(const code_engine::CodeState* cs) { s_code_state = cs; }
 
 static void write_iso_timestamp(char* out, size_t out_size) {
     // No NTP yet; emit uptime-based marker (matches clock project convention).
@@ -58,17 +60,24 @@ void build_state(const cfg::Config& c, JsonDocument& out) {
 
     JsonObject puzzle = out["puzzle"].to<JsonObject>();
     puzzle["mode"]    = c.puzzle_mode;
-    puzzle["latched"] = false;  // Phase 7
+    puzzle["latched"] = s_code_state ? s_code_state->latched : false;
 
-    // Code engine (Phase 7) not implemented yet — emit nulls but include the
-    // configured target so operators can see what the device will be matching.
     JsonObject code_obj = out["code"].to<JsonObject>();
-    code_obj["code"]      = nullptr;
-    code_obj["code_int"]  = nullptr;
-    code_obj["code_bits"] = nullptr;
-    if (c.puzzle_has_target) code_obj["target"] = c.puzzle_target.c_str();
-    else                     code_obj["target"] = nullptr;
-    code_obj["solved"]    = false;
+    if (s_code_state) {
+        code_obj["code"]      = s_code_state->code_str;
+        code_obj["code_int"]  = s_code_state->code_int;
+        code_obj["code_bits"] = s_code_state->code_bits;
+        if (s_code_state->has_target) code_obj["target"] = s_code_state->target_str;
+        else                          code_obj["target"] = nullptr;
+        code_obj["solved"]    = s_code_state->solved;
+    } else {
+        code_obj["code"]      = nullptr;
+        code_obj["code_int"]  = nullptr;
+        code_obj["code_bits"] = nullptr;
+        if (c.puzzle_has_target) code_obj["target"] = c.puzzle_target.c_str();
+        else                     code_obj["target"] = nullptr;
+        code_obj["solved"]    = false;
+    }
 
     JsonObject disp = out["display"].to<JsonObject>();
     disp["brightness"]       = c.display_brightness;

@@ -1,8 +1,9 @@
-// test_native_smoke.cpp — Phase 0 + Phase 1 + Phase 6 native smoke tests.
+// test_native_smoke.cpp — Phase 0 + Phase 1 + Phase 6 + Phase 7 native smoke tests.
 //
 // Phase 0: verify toolchain, hardware constants.
 // Phase 1: verify cfg::Config defaults, JSON round-trip, field validation.
 // Phase 6: verify SwitchMatrix debounce, noise rejection, bit assignment.
+// Phase 7: code_engine formatter, target parser, live/latching state machines.
 //
 // config_json.cpp is included directly (test_build_src = false for native);
 // it has no LittleFS / WiFi / log dependencies.
@@ -13,6 +14,8 @@
 #include "../src/config_json.cpp"
 #include "../src/switch_matrix.h"
 #include "../src/switch_matrix.cpp"
+#include "../src/code_engine.h"
+#include "../src/code_engine.cpp"
 
 // Provide the EspClass and SerialStub instances that Arduino.h declares extern.
 EspClass   ESP;
@@ -360,6 +363,321 @@ void test_matrix_debounce_clamps_to_one() {
 
 // ---------------------------------------------------------------------------
 
+// ============================================================================
+// Phase 7 — code engine
+// ============================================================================
+
+namespace {
+
+struct EventLog {
+    int changed   = 0;
+    int solved    = 0;
+    int unsolved  = 0;
+    int solve     = 0;
+    int unlatch   = 0;
+
+    uint32_t last_code_int  = 0;
+    uint32_t last_code_bits = 0;
+    char     last_code_str[9] = {};
+
+    void reset() { *this = EventLog(); }
+};
+
+static EventLog g_evlog;
+
+static code_engine::Callbacks make_callbacks() {
+    code_engine::Callbacks cb;
+    cb.user = &g_evlog;
+    cb.on_code_changed = [](uint32_t ci, uint32_t cb_, const char* cs, void* u) {
+        auto* log = static_cast<EventLog*>(u);
+        log->changed++;
+        log->last_code_int  = ci;
+        log->last_code_bits = cb_;
+        strncpy(log->last_code_str, cs, 8);
+        log->last_code_str[8] = '\0';
+    };
+    cb.on_code_solved = [](uint32_t, uint32_t, const char*, void* u) {
+        static_cast<EventLog*>(u)->solved++;
+    };
+    cb.on_code_unsolved = [](uint32_t, uint32_t, const char*, void* u) {
+        static_cast<EventLog*>(u)->unsolved++;
+    };
+    cb.on_solve = [](uint32_t, uint32_t, const char*, void* u) {
+        static_cast<EventLog*>(u)->solve++;
+    };
+    cb.on_unlatch = [](void* u) {
+        static_cast<EventLog*>(u)->unlatch++;
+    };
+    return cb;
+}
+
+} // namespace
+
+// ---- formatter ----
+
+void test_engine_format_code_basic() {
+    char buf[9];
+    code_engine::format_code(123456, buf);
+    TEST_ASSERT_EQUAL_STRING("12-34-56", buf);
+}
+
+void test_engine_format_code_leading_zeros() {
+    char buf[9];
+    code_engine::format_code(123, buf);
+    TEST_ASSERT_EQUAL_STRING("00-01-23", buf);
+}
+
+void test_engine_format_code_zero() {
+    char buf[9];
+    code_engine::format_code(0, buf);
+    TEST_ASSERT_EQUAL_STRING("00-00-00", buf);
+}
+
+void test_engine_format_code_max() {
+    char buf[9];
+    code_engine::format_code(999999, buf);
+    TEST_ASSERT_EQUAL_STRING("99-99-99", buf);
+}
+
+void test_engine_format_code_wraps_at_1M() {
+    char buf[9];
+    code_engine::format_code(1000001, buf);  // 1,000,001 mod 1M = 1
+    TEST_ASSERT_EQUAL_STRING("00-00-01", buf);
+}
+
+// ---- target parser ----
+
+void test_engine_parse_target_integer_string() {
+    uint32_t v = 0;
+    TEST_ASSERT_TRUE(code_engine::parse_target("123456", &v));
+    TEST_ASSERT_EQUAL_UINT32(123456u, v);
+}
+
+void test_engine_parse_target_hyphenated() {
+    uint32_t v = 0;
+    TEST_ASSERT_TRUE(code_engine::parse_target("12-34-56", &v));
+    TEST_ASSERT_EQUAL_UINT32(123456u, v);
+}
+
+void test_engine_parse_target_short_left_padded() {
+    uint32_t v = 0;
+    TEST_ASSERT_TRUE(code_engine::parse_target("123", &v));
+    TEST_ASSERT_EQUAL_UINT32(123u, v);
+}
+
+void test_engine_parse_target_hyphenated_single_digits() {
+    uint32_t v = 0;
+    TEST_ASSERT_TRUE(code_engine::parse_target("1-2-3", &v));
+    TEST_ASSERT_EQUAL_UINT32(123u, v);
+}
+
+void test_engine_parse_target_zero() {
+    uint32_t v = 99;
+    TEST_ASSERT_TRUE(code_engine::parse_target("000000", &v));
+    TEST_ASSERT_EQUAL_UINT32(0u, v);
+}
+
+void test_engine_parse_target_max() {
+    uint32_t v = 0;
+    TEST_ASSERT_TRUE(code_engine::parse_target("999999", &v));
+    TEST_ASSERT_EQUAL_UINT32(999999u, v);
+}
+
+void test_engine_parse_target_rejects_letters() {
+    uint32_t v = 0;
+    TEST_ASSERT_FALSE(code_engine::parse_target("12ab56", &v));
+}
+
+void test_engine_parse_target_rejects_overflow() {
+    uint32_t v = 0;
+    // 7 digits → too long
+    TEST_ASSERT_FALSE(code_engine::parse_target("1234567", &v));
+}
+
+void test_engine_parse_target_rejects_empty() {
+    uint32_t v = 0;
+    TEST_ASSERT_FALSE(code_engine::parse_target("", &v));
+}
+
+// ---- live mode code_changed ----
+
+void test_engine_live_fires_code_changed() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", false, 0, make_callbacks());
+
+    eng.tick(42u);
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.changed);
+    TEST_ASSERT_EQUAL_UINT32(42u, g_evlog.last_code_bits);
+    TEST_ASSERT_EQUAL_UINT32(42u, g_evlog.last_code_int);
+    TEST_ASSERT_EQUAL_STRING("00-00-42", g_evlog.last_code_str);
+}
+
+void test_engine_live_no_duplicate_event_for_same_state() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", false, 0, make_callbacks());
+
+    eng.tick(7u);
+    eng.tick(7u);
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.changed);  // only one
+}
+
+// ---- live mode target matching ----
+
+void test_engine_live_code_solved_and_unsolved() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", true, 100u, make_callbacks());  // target = 000100
+
+    eng.tick(100u);   // matches
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.solved);
+    TEST_ASSERT_EQUAL_INT(0, g_evlog.unsolved);
+    TEST_ASSERT_TRUE(eng.state().solved);
+
+    eng.tick(101u);   // unmatches
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.unsolved);
+    TEST_ASSERT_FALSE(eng.state().solved);
+}
+
+void test_engine_live_solved_fires_each_time() {
+    // Unlike latching, live mode fires on_code_solved every entry.
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", true, 50u, make_callbacks());
+
+    eng.tick(50u);   // solve
+    eng.tick(51u);   // unsolve
+    eng.tick(50u);   // solve again
+    TEST_ASSERT_EQUAL_INT(2, g_evlog.solved);
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.unsolved);
+}
+
+void test_engine_live_no_target_no_solved_event() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", false, 0, make_callbacks());
+
+    eng.tick(123456u);
+    TEST_ASSERT_EQUAL_INT(0, g_evlog.solved);
+}
+
+// ---- latching mode ----
+
+void test_engine_latching_solve_fires_once() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("latching", true, 999u, make_callbacks());
+
+    eng.tick(999u);   // first match → solve
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.solve);
+    TEST_ASSERT_TRUE(eng.state().latched);
+
+    // Subsequent ticks after latching: solve must NOT fire again,
+    // and code_changed must NOT fire while latched.
+    int cnt_at_latch = g_evlog.changed;
+    eng.tick(998u);
+    eng.tick(999u);
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.solve);           // still 1
+    TEST_ASSERT_EQUAL_INT(cnt_at_latch, g_evlog.changed); // no new code_changed while LATCHED
+}
+
+void test_engine_latching_reset_clears_latch() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("latching", true, 5u, make_callbacks());
+
+    eng.tick(5u);     // solve → LATCHED
+    TEST_ASSERT_TRUE(eng.state().latched);
+
+    eng.reset();      // → ACTIVE
+    TEST_ASSERT_FALSE(eng.state().latched);
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.unlatch);
+
+    // After reset, code_changed fires again on next matrix change.
+    // changed_count was already 1 from tick(5u) before the solve.
+    int cnt_before = g_evlog.changed;
+    eng.tick(6u);
+    TEST_ASSERT_EQUAL_INT(cnt_before + 1, g_evlog.changed);
+}
+
+void test_engine_latching_code_bits_updates_while_latched() {
+    // §5.2: "switch-state changes are still tracked in code_bits even
+    // while LATCHED"
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("latching", true, 3u, make_callbacks());
+
+    eng.tick(3u);     // solve → LATCHED (fires code_changed once)
+    int cnt_at_latch = g_evlog.changed;
+    eng.tick(4u);     // matrix changes while LATCHED
+    TEST_ASSERT_EQUAL_UINT32(4u, eng.state().code_bits);     // updated
+    TEST_ASSERT_EQUAL_INT(cnt_at_latch, g_evlog.changed);    // no new code_changed while LATCHED
+}
+
+void test_engine_latching_mode_switch_clears_latch_silently() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("latching", true, 10u, make_callbacks());
+
+    eng.tick(10u);    // → LATCHED
+    eng.set_mode(code_engine::Mode::Live);
+    TEST_ASSERT_FALSE(eng.state().latched);
+    TEST_ASSERT_EQUAL_INT(0, g_evlog.unlatch); // silent
+}
+
+void test_engine_latching_no_target_does_not_latch() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("latching", false, 0, make_callbacks());
+
+    eng.tick(0u);
+    TEST_ASSERT_FALSE(eng.state().latched);
+    TEST_ASSERT_EQUAL_INT(0, g_evlog.solve);
+    // code_changed DOES fire (latching falls back to live when no target)
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.changed);
+}
+
+// ---- set_target at runtime ----
+
+void test_engine_set_target_clears_latch_with_unlatch() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("latching", true, 7u, make_callbacks());
+
+    eng.tick(7u);     // → LATCHED
+    TEST_ASSERT_TRUE(eng.state().latched);
+
+    eng.set_target(true, 8u);    // new target clears latch
+    TEST_ASSERT_FALSE(eng.state().latched);
+    TEST_ASSERT_EQUAL_INT(1, g_evlog.unlatch);
+}
+
+void test_engine_set_target_null_clears_solved() {
+    g_evlog.reset();
+    code_engine::CodeEngine eng;
+    eng.begin("live", true, 55u, make_callbacks());
+
+    eng.tick(55u);   // → solved
+    TEST_ASSERT_TRUE(eng.state().solved);
+
+    eng.set_target(false, 0);
+    TEST_ASSERT_FALSE(eng.state().has_target);
+    TEST_ASSERT_FALSE(eng.state().solved);
+}
+
+// ---- derive_code_int ----
+
+void test_engine_derive_code_int_wraps() {
+    TEST_ASSERT_EQUAL_UINT32(0u,   code_engine::derive_code_int(0u));
+    TEST_ASSERT_EQUAL_UINT32(1u,   code_engine::derive_code_int(1000001u));
+    TEST_ASSERT_EQUAL_UINT32(999999u, code_engine::derive_code_int(999999u));
+    // Max 20-bit value: 0xFFFFF = 1048575. 1048575 mod 1000000 = 48575.
+    TEST_ASSERT_EQUAL_UINT32(48575u, code_engine::derive_code_int(0xFFFFFu));
+}
+
+// ---------------------------------------------------------------------------
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_i2c_pins);
@@ -387,5 +705,33 @@ int main() {
     RUN_TEST(test_matrix_independent_cells);
     RUN_TEST(test_matrix_force_state_masks_to_20_bits);
     RUN_TEST(test_matrix_debounce_clamps_to_one);
+    // Phase 7 — code engine
+    RUN_TEST(test_engine_format_code_basic);
+    RUN_TEST(test_engine_format_code_leading_zeros);
+    RUN_TEST(test_engine_format_code_zero);
+    RUN_TEST(test_engine_format_code_max);
+    RUN_TEST(test_engine_format_code_wraps_at_1M);
+    RUN_TEST(test_engine_parse_target_integer_string);
+    RUN_TEST(test_engine_parse_target_hyphenated);
+    RUN_TEST(test_engine_parse_target_short_left_padded);
+    RUN_TEST(test_engine_parse_target_hyphenated_single_digits);
+    RUN_TEST(test_engine_parse_target_zero);
+    RUN_TEST(test_engine_parse_target_max);
+    RUN_TEST(test_engine_parse_target_rejects_letters);
+    RUN_TEST(test_engine_parse_target_rejects_overflow);
+    RUN_TEST(test_engine_parse_target_rejects_empty);
+    RUN_TEST(test_engine_live_fires_code_changed);
+    RUN_TEST(test_engine_live_no_duplicate_event_for_same_state);
+    RUN_TEST(test_engine_live_code_solved_and_unsolved);
+    RUN_TEST(test_engine_live_solved_fires_each_time);
+    RUN_TEST(test_engine_live_no_target_no_solved_event);
+    RUN_TEST(test_engine_latching_solve_fires_once);
+    RUN_TEST(test_engine_latching_reset_clears_latch);
+    RUN_TEST(test_engine_latching_code_bits_updates_while_latched);
+    RUN_TEST(test_engine_latching_mode_switch_clears_latch_silently);
+    RUN_TEST(test_engine_latching_no_target_does_not_latch);
+    RUN_TEST(test_engine_set_target_clears_latch_with_unlatch);
+    RUN_TEST(test_engine_set_target_null_clears_solved);
+    RUN_TEST(test_engine_derive_code_int_wraps);
     return UNITY_END();
 }

@@ -26,15 +26,17 @@
 #include "mqtt_mgr.h"
 #include "commands.h"
 #include "switch_matrix.h"
+#include "code_engine.h"
+#include "state.h"
 
 // ---------------------------------------------------------------------------
 // Module tick stubs — replaced with real includes as phases are implemented.
 // ---------------------------------------------------------------------------
 
-static inline void code_engine_loop()   {}   // Phase 7
 static inline void battery_monitor_loop() {} // Phase 9b
 static inline void sleep_manager_loop()  {}  // Phase 9c
 // switch_matrix — Phase 6 (live)
+// code_engine   — Phase 7 (live)
 // mqtt_mgr — Phase 5 (live)
 // web_ui — Phase 3 (live)
 // ota_mgr — Phase 4 (live)
@@ -50,6 +52,8 @@ cfg::Config g_config;
 switch_matrix::SwitchMatrix g_matrix;
 static uint32_t s_last_matrix_tick_ms = 0;
 static uint32_t s_last_matrix_state   = 0;
+
+code_engine::CodeEngine g_engine;
 
 static void matrix_tick() {
     // Pace ticks by the configured poll interval. SwitchMatrix itself does
@@ -75,7 +79,7 @@ static void matrix_tick() {
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=6-matrix fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=7-code fw=%s", FW_VERSION);
 
     bool cfg_was_invalid = false;
     cfg::load(g_config, cfg_was_invalid);
@@ -86,6 +90,35 @@ void setup() {
 
     commands::begin(&g_config);
     g_matrix.begin(switch_matrix::esp_scan_io(), g_config.scan_debounce_samples);
+
+    // Code engine: wire callbacks to MQTT event publishers.
+    {
+        code_engine::Callbacks cb;
+        cb.user = nullptr;
+        cb.on_code_changed = [](uint32_t, uint32_t, const char*, void*) {
+            // Phase 8: publish code_changed event here.
+        };
+        cb.on_code_solved = [](uint32_t, uint32_t, const char*, void*) {
+            // Phase 8: publish code_solved event.
+        };
+        cb.on_code_unsolved = [](uint32_t, uint32_t, const char*, void*) {
+            // Phase 8: publish code_unsolved event.
+        };
+        cb.on_solve = [](uint32_t, uint32_t, const char*, void*) {
+            // Phase 8: publish solve event.
+        };
+        cb.on_unlatch = [](void*) {
+            // Phase 8: publish unlatch event.
+        };
+        uint32_t target_int = 0;
+        bool has_target = g_config.puzzle_has_target;
+        if (has_target) {
+            code_engine::parse_target(g_config.puzzle_target.c_str(), &target_int);
+        }
+        g_engine.begin(g_config.puzzle_mode.c_str(), has_target, target_int, cb);
+        appstate::set_code_state(&g_engine.state());
+    }
+
     wifi_mgr::begin(g_config);
     web_ui::begin(&g_config);
     ota_mgr::begin_arduino_ota(g_config);
@@ -102,7 +135,7 @@ void setup() {
 
 void loop() {
     matrix_tick();
-    code_engine_loop();
+    g_engine.tick(g_matrix.state());
     battery_monitor_loop();
     sleep_manager_loop();
     mqtt_mgr::loop();
