@@ -22,6 +22,7 @@
 #include "log.h"
 #include "wifi_mgr.h"
 #include "web_ui.h"
+#include "ota_mgr.h"
 
 // ---------------------------------------------------------------------------
 // Module tick stubs — replaced with real includes as phases are implemented.
@@ -33,7 +34,7 @@ static inline void battery_monitor_loop() {} // Phase 9b
 static inline void sleep_manager_loop()  {}  // Phase 9c
 static inline void mqtt_mgr_loop()      {}   // Phase 5
 // web_ui — Phase 3 (live)
-static inline void ota_mgr_loop()       {}   // Phase 4
+// ota_mgr — Phase 4 (live)
 
 // ---------------------------------------------------------------------------
 // Device configuration (loaded from LittleFS at boot)
@@ -47,7 +48,7 @@ cfg::Config g_config;
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=3-webui fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=4-ota fw=%s", FW_VERSION);
 
     bool cfg_was_invalid = false;
     cfg::load(g_config, cfg_was_invalid);
@@ -57,6 +58,7 @@ void setup() {
 
     wifi_mgr::begin(g_config);
     web_ui::begin(&g_config);
+    ota_mgr::begin_arduino_ota(g_config);
 
     pxlog::info("main", "matrix_cells=%u cols=%u rows=%u",
                 MATRIX_NUM_CELLS, pins::NUM_COLS, pins::NUM_ROWS);
@@ -72,7 +74,7 @@ void loop() {
     sleep_manager_loop();
     mqtt_mgr_loop();
     web_ui::loop();
-    ota_mgr_loop();
+    ota_mgr::loop();
     wifi_mgr::loop();
     yield();
 }

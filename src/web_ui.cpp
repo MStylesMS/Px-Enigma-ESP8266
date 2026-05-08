@@ -17,6 +17,7 @@
 #include "web_ui.h"
 #include "log.h"
 #include "wifi_mgr.h"
+#include "ota_mgr.h"
 
 #include <ArduinoJson.h>
 #include <ESP8266WebServer.h>
@@ -282,6 +283,9 @@ void begin(cfg::Config* c) {
     s_server.on("/api/reset",         HTTP_POST, handle_post_reset);
     s_server.on("/api/restart",       HTTP_POST, handle_post_restart);
     s_server.onNotFound(handle_not_found);
+
+    // Mount HTTP OTA updater on the shared server (must precede begin()).
+    ota_mgr::mount_http_update(s_server, *s_cfg);
 
     s_server.begin();
     pxlog::info(TAG, "HTTP server up on :80");
