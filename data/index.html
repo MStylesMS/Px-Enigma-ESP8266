@@ -8,7 +8,11 @@
 </head>
 <body>
   <header>
-    <h1 id="title">px-enigma</h1>
+    <div class="header-inner">
+      <img id="paradox-logo" src="/logo.svg" alt="Paradox"
+           onerror="this.style.display='none'" />
+      <h1 id="title">px-enigma</h1>
+    </div>
     <div id="banner" class="hidden"></div>
   </header>
 
@@ -34,6 +38,15 @@
         <span class="stat-lbl">Free heap</span>  <span id="s-heap">—</span>
         <span class="stat-lbl">Uptime</span>      <span id="s-uptime">—</span>
       </div>
+    </section>
+
+    <!-- Switch grid (live) -->
+    <section id="switch-grid-section">
+      <h2>Switches</h2>
+      <div id="switch-grid-wrap">
+        <div id="switch-grid"></div>
+      </div>
+      <p class="hint">Layout &amp; orientation: edit <code>switch_layout.json</code> and re-flash filesystem.</p>
     </section>
 
     <!-- Config form -->

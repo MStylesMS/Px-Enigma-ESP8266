@@ -103,6 +103,67 @@ async function saveConfig(ev) {
   }
 }
 
+// ---- switch grid ----
+// Bit layout (matches firmware hardware_io / config.h):
+//   bit = col_index * rows + row_index   (0-based)
+//   switch number = bit + 1
+// The grid uses grid-auto-flow:column so iterating bits 0..N in order
+// places SW1-SWrows in column 1, SW(rows+1)..SW(2*rows) in column 2, etc.
+
+let g_sw_layout = { cols: 4, rows: 5, switch_count: 20,
+                    rotation: 0, mirror_x: false, mirror_y: false };
+
+async function loadSwitchLayout() {
+  try {
+    const r = await fetch('/switch_layout.json');
+    if (r.ok) Object.assign(g_sw_layout, await r.json());
+  } catch (e) { /* use defaults */ }
+  initSwitchGrid();
+}
+
+function initSwitchGrid() {
+  const { cols, rows, switch_count, rotation, mirror_x, mirror_y } = g_sw_layout;
+  const cellPx = 36, gapPx = 6;
+  const gridW = cols * cellPx + (cols - 1) * gapPx;
+  const gridH = rows * cellPx + (rows - 1) * gapPx;
+
+  const grid = $('#switch-grid');
+  grid.style.gridTemplateColumns = `repeat(${cols}, ${cellPx}px)`;
+  grid.style.gridTemplateRows    = `repeat(${rows}, ${cellPx}px)`;
+  grid.style.width  = gridW + 'px';
+  grid.style.height = gridH + 'px';
+
+  const xforms = [];
+  if (rotation)  xforms.push(`rotate(${rotation}deg)`);
+  if (mirror_x)  xforms.push('scaleX(-1)');
+  if (mirror_y)  xforms.push('scaleY(-1)');
+  grid.style.transform = xforms.join(' ');
+
+  // Expand the wrapper so rotation never clips the grid.
+  const diag = Math.ceil(Math.hypot(gridW, gridH)) + 16;
+  $('#switch-grid-wrap').style.minHeight = diag + 'px';
+
+  grid.innerHTML = '';
+  const total = cols * rows;
+  for (let bit = 0; bit < total; bit++) {
+    const swNum = bit + 1;
+    const cell = document.createElement('div');
+    const inactive = swNum > switch_count;
+    cell.className = 'sw-cell' + (inactive ? ' sw-inactive' : '');
+    cell.dataset.bit = bit;
+    if (!inactive) cell.textContent = swNum;
+    grid.appendChild(cell);
+  }
+}
+
+function updateSwitchGrid(code_bits) {
+  if (code_bits == null) return;
+  document.querySelectorAll('#switch-grid .sw-cell:not(.sw-inactive)').forEach(cell => {
+    const on = (code_bits >>> parseInt(cell.dataset.bit)) & 1;
+    cell.classList.toggle('sw-on', !!on);
+  });
+}
+
 // ---- state ----
 async function loadState() {
   try {
@@ -116,6 +177,7 @@ async function loadState() {
     set('#s-status',  s.status || '—');
     set('#s-code',    (s.code && s.code.code) || '—');
     set('#s-solved',  (s.code && s.code.solved != null) ? String(s.code.solved) : '—');
+    if (s.code) updateSwitchGrid(s.code.code_bits);
     if (s.wifi) {
       const sta = s.wifi.sta || {};
       set('#s-sta',  sta.connected ? (sta.ssid + ' ' + sta.ip) : 'disconnected');
@@ -169,6 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadConfig();
   loadState();
   loadLog();
+  loadSwitchLayout();
 
   $('#cfg-form').addEventListener('submit', saveConfig);
   $('#refresh').addEventListener('click', () => { loadState(); loadLog(); });

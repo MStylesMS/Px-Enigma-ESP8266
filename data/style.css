@@ -4,7 +4,11 @@ body {
   margin: 0; padding: 1rem;
   background: #1c1f24; color: #e8e8e8;
 }
-header h1 { margin: 0 0 .5rem; font-size: 1.4rem; }
+.header-inner {
+  display: flex; align-items: center; gap: .6rem; margin-bottom: .5rem;
+}
+#paradox-logo { height: 36px; width: auto; }
+header h1 { margin: 0; font-size: 1.4rem; }
 main { display: grid; gap: 1rem; max-width: 780px; margin: 0 auto; }
 
 section, fieldset {
@@ -56,3 +60,29 @@ pre {
 .hidden { display: none; }
 #save-status { margin-left: .6rem; font-size: .9rem; }
 a { color: #7daefc; }
+
+/* ---- Switch grid ---- */
+#switch-grid-wrap {
+  display: flex; justify-content: center; align-items: center;
+  padding: .75rem; overflow: visible;
+}
+#switch-grid {
+  display: grid; grid-auto-flow: column;
+  gap: 6px; transform-origin: center center;
+}
+.sw-cell {
+  width: 36px; height: 36px; border-radius: 4px;
+  border: 1px solid #353b46;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .7rem; color: #5a6478;
+  background: #11141a;
+  transition: background .12s, border-color .12s, color .12s;
+  user-select: none;
+}
+.sw-cell.sw-on {
+  background: #1a4a2e; border-color: #3db36a; color: #7dffb0;
+  font-weight: 600;
+}
+.sw-cell.sw-inactive { opacity: .25; }
+.hint { font-size: .78rem; color: #5a6478; margin: .3rem 0 0; }
+.hint code { color: #7daefc; }

@@ -205,7 +205,24 @@ static void handle_post_restart() {
     pxlog::info(TAG, "restart requested via HTTP");
 }
 
+// Serve any file that exists in LittleFS but has no explicit route registered
+// (e.g. /logo.svg, /switch_layout.json, future static assets).
+static const char* mime_for(const String& path) {
+    if (path.endsWith(".json")) return "application/json";
+    if (path.endsWith(".svg"))  return "image/svg+xml";
+    if (path.endsWith(".png"))  return "image/png";
+    if (path.endsWith(".ico"))  return "image/x-icon";
+    if (path.endsWith(".css"))  return "text/css";
+    if (path.endsWith(".js"))   return "application/javascript";
+    return "application/octet-stream";
+}
+
 static void handle_not_found() {
+    const String path = s_server.uri();
+    if (LittleFS.exists(path)) {
+        stream_file(path.c_str(), mime_for(path));
+        return;
+    }
     s_server.send(404, "text/plain", "not found");
 }
 
