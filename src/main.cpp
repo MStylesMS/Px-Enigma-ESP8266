@@ -25,15 +25,16 @@
 #include "ota_mgr.h"
 #include "mqtt_mgr.h"
 #include "commands.h"
+#include "switch_matrix.h"
 
 // ---------------------------------------------------------------------------
 // Module tick stubs — replaced with real includes as phases are implemented.
 // ---------------------------------------------------------------------------
 
-static inline void switch_matrix_loop() {}   // Phase 6
 static inline void code_engine_loop()   {}   // Phase 7
 static inline void battery_monitor_loop() {} // Phase 9b
 static inline void sleep_manager_loop()  {}  // Phase 9c
+// switch_matrix — Phase 6 (live)
 // mqtt_mgr — Phase 5 (live)
 // web_ui — Phase 3 (live)
 // ota_mgr — Phase 4 (live)
@@ -44,13 +45,37 @@ static inline void sleep_manager_loop()  {}  // Phase 9c
 
 cfg::Config g_config;
 
+// Switch-matrix scanner (Phase 6). The hardware-facing ScanIO comes from
+// scan_io_esp.cpp which is only compiled in the ESP build.
+switch_matrix::SwitchMatrix g_matrix;
+static uint32_t s_last_matrix_tick_ms = 0;
+static uint32_t s_last_matrix_state   = 0;
+
+static void matrix_tick() {
+    // Pace ticks by the configured poll interval. SwitchMatrix itself does
+    // not call millis() so it stays host-testable; the spacing is enforced
+    // here in the cooperative loop.
+    uint32_t now = millis();
+    uint32_t interval = g_config.scan_poll_interval_ms;
+    if (interval == 0) interval = 1;
+    if (now - s_last_matrix_tick_ms < interval) return;
+    s_last_matrix_tick_ms = now;
+    if (g_matrix.tick()) {
+        uint32_t st = g_matrix.state();
+        pxlog::info("matrix", "state=0x%05lx changes=%lu",
+                    (unsigned long)st,
+                    (unsigned long)g_matrix.change_count());
+        s_last_matrix_state = st;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Arduino entry points
 // ---------------------------------------------------------------------------
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=5-mqtt fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=6-matrix fw=%s", FW_VERSION);
 
     bool cfg_was_invalid = false;
     cfg::load(g_config, cfg_was_invalid);
@@ -60,6 +85,7 @@ void setup() {
     }
 
     commands::begin(&g_config);
+    g_matrix.begin(switch_matrix::esp_scan_io(), g_config.scan_debounce_samples);
     wifi_mgr::begin(g_config);
     web_ui::begin(&g_config);
     ota_mgr::begin_arduino_ota(g_config);
@@ -75,7 +101,7 @@ void setup() {
 }
 
 void loop() {
-    switch_matrix_loop();
+    matrix_tick();
     code_engine_loop();
     battery_monitor_loop();
     sleep_manager_loop();

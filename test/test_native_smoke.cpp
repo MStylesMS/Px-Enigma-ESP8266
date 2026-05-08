@@ -1,7 +1,8 @@
-// test_native_smoke.cpp — Phase 0 + Phase 1 native smoke tests.
+// test_native_smoke.cpp — Phase 0 + Phase 1 + Phase 6 native smoke tests.
 //
 // Phase 0: verify toolchain, hardware constants.
 // Phase 1: verify cfg::Config defaults, JSON round-trip, field validation.
+// Phase 6: verify SwitchMatrix debounce, noise rejection, bit assignment.
 //
 // config_json.cpp is included directly (test_build_src = false for native);
 // it has no LittleFS / WiFi / log dependencies.
@@ -10,6 +11,8 @@
 // Pull in config.h + config_json.cpp via the -I test/stubs build flag.
 #include "../src/config.h"
 #include "../src/config_json.cpp"
+#include "../src/switch_matrix.h"
+#include "../src/switch_matrix.cpp"
 
 // Provide the EspClass and SerialStub instances that Arduino.h declares extern.
 EspClass   ESP;
@@ -192,6 +195,170 @@ void test_config_validation_bad_brightness() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 6 — switch matrix
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Test ScanIO: returns whatever the test has poked into row_pattern_[col].
+// The test code pokes new values to simulate switch closures + noise.
+class FakeScanIO : public switch_matrix::ScanIO {
+public:
+    FakeScanIO() {
+        for (uint8_t c = 0; c < switch_matrix::NUM_COLS; ++c) row_pattern_[c] = 0;
+    }
+    void configure() override { configure_calls_++; }
+    uint8_t drive_and_read(uint8_t col) override {
+        if (col >= switch_matrix::NUM_COLS) return 0;
+        last_col_read_ = col;
+        return row_pattern_[col];
+    }
+    void idle() override { idle_calls_++; }
+
+    void set_row(uint8_t col, uint8_t row, bool closed) {
+        if (col >= switch_matrix::NUM_COLS || row >= switch_matrix::NUM_ROWS) return;
+        if (closed) row_pattern_[col] |=  (uint8_t)(1u << row);
+        else        row_pattern_[col] &= (uint8_t)~(1u << row);
+    }
+    void set_col_pattern(uint8_t col, uint8_t pattern) {
+        if (col < switch_matrix::NUM_COLS) row_pattern_[col] = pattern;
+    }
+
+    uint8_t configure_calls_ = 0;
+    uint8_t idle_calls_      = 0;
+    uint8_t last_col_read_   = 0xFF;
+    uint8_t row_pattern_[switch_matrix::NUM_COLS];
+};
+
+// Run a complete scan sweep (NUM_COLS ticks).
+void sweep(switch_matrix::SwitchMatrix& sm, uint8_t n = switch_matrix::NUM_COLS) {
+    for (uint8_t i = 0; i < n; ++i) sm.tick();
+}
+
+} // namespace
+
+void test_matrix_bit_index_for() {
+    // Bit layout: bit = col_index * NUM_ROWS + row_index
+    using switch_matrix::bit_index_for;
+    TEST_ASSERT_EQUAL(0,  bit_index_for(0, 0));   // col0,row0 → switch 1
+    TEST_ASSERT_EQUAL(4,  bit_index_for(0, 4));
+    TEST_ASSERT_EQUAL(5,  bit_index_for(1, 0));
+    TEST_ASSERT_EQUAL(19, bit_index_for(3, 4));   // last cell
+}
+
+void test_matrix_initial_state_is_zero() {
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 4);
+    TEST_ASSERT_EQUAL_UINT32(0u, sm.state());
+    TEST_ASSERT_EQUAL_UINT32(0u, sm.change_count());
+    TEST_ASSERT_EQUAL_UINT8(1, io.configure_calls_);
+}
+
+void test_matrix_idle_called_at_end_of_sweep() {
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 1);
+    TEST_ASSERT_EQUAL_UINT8(0, io.idle_calls_);
+    sweep(sm);   // exactly NUM_COLS ticks
+    TEST_ASSERT_EQUAL_UINT8(1, io.idle_calls_);
+    sweep(sm);
+    TEST_ASSERT_EQUAL_UINT8(2, io.idle_calls_);
+}
+
+void test_matrix_debounce_on_transition() {
+    // With debounce_samples = 4, a closure must persist for 4 sweeps before
+    // the bit flips. Sweep #1 starts the candidate (count = 1); flip occurs
+    // when count reaches 4.
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 4);
+
+    io.set_row(/*col=*/2, /*row=*/3, true);
+    const uint8_t bit = switch_matrix::bit_index_for(2, 3);
+
+    sweep(sm); TEST_ASSERT_EQUAL_UINT32(0u, sm.state());   // sample 1
+    sweep(sm); TEST_ASSERT_EQUAL_UINT32(0u, sm.state());   // sample 2
+    sweep(sm); TEST_ASSERT_EQUAL_UINT32(0u, sm.state());   // sample 3
+    sweep(sm);                                             // sample 4 → flip
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)(1u << bit), sm.state());
+    TEST_ASSERT_EQUAL_UINT32(1u, sm.change_count());
+}
+
+void test_matrix_debounce_off_transition() {
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 4);
+
+    // Pre-arm: close (col=1,row=2) until it commits, then re-open and verify
+    // the off-flip is also debounced.
+    const uint8_t bit = switch_matrix::bit_index_for(1, 2);
+    io.set_row(1, 2, true);
+    sweep(sm); sweep(sm); sweep(sm); sweep(sm);
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)(1u << bit), sm.state());
+
+    io.set_row(1, 2, false);
+    sweep(sm); TEST_ASSERT_EQUAL_UINT32((uint32_t)(1u << bit), sm.state());
+    sweep(sm); TEST_ASSERT_EQUAL_UINT32((uint32_t)(1u << bit), sm.state());
+    sweep(sm); TEST_ASSERT_EQUAL_UINT32((uint32_t)(1u << bit), sm.state());
+    sweep(sm); TEST_ASSERT_EQUAL_UINT32(0u, sm.state());
+    TEST_ASSERT_EQUAL_UINT32(2u, sm.change_count());
+}
+
+void test_matrix_rejects_single_sample_noise() {
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 4);
+
+    // Sweep 1: pulse a single closure on (col=0,row=0).
+    io.set_row(0, 0, true);
+    sweep(sm);                       // sample 1 of "closed"
+    io.set_row(0, 0, false);
+    sweep(sm);                       // sample 1 of "open" (resets candidate)
+    sweep(sm);
+    sweep(sm);
+    sweep(sm);
+    TEST_ASSERT_EQUAL_UINT32(0u, sm.state());
+    TEST_ASSERT_EQUAL_UINT32(0u, sm.change_count());
+}
+
+void test_matrix_independent_cells() {
+    // Multiple cells closing simultaneously should each commit independently
+    // and pack into the correct bit positions.
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 2);
+
+    io.set_row(0, 0, true);   // bit 0
+    io.set_row(2, 4, true);   // bit 14
+    io.set_row(3, 4, true);   // bit 19 (top-most)
+
+    sweep(sm); sweep(sm);     // 2 sweeps == 2 samples per cell → flip
+
+    const uint32_t expected = (1u << 0) | (1u << 14) | (1u << 19);
+    TEST_ASSERT_EQUAL_UINT32(expected, sm.state());
+    TEST_ASSERT_EQUAL_UINT32(3u, sm.change_count());
+}
+
+void test_matrix_force_state_masks_to_20_bits() {
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 4);
+    sm.force_state(0xFFFFFFFFu);
+    TEST_ASSERT_EQUAL_UINT32((1u << switch_matrix::NUM_CELLS) - 1u, sm.state());
+}
+
+void test_matrix_debounce_clamps_to_one() {
+    // debounce=0 should clamp to 1 (every sample commits immediately).
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 0);
+    io.set_row(0, 0, true);
+    sweep(sm, 1);             // single tick on col 0
+    TEST_ASSERT_EQUAL_UINT32(1u, sm.state());
+}
+
+// ---------------------------------------------------------------------------
 
 int main() {
     UNITY_BEGIN();
@@ -210,5 +377,15 @@ int main() {
     RUN_TEST(test_config_validation_bad_mode);
     RUN_TEST(test_config_validation_bad_port);
     RUN_TEST(test_config_validation_bad_brightness);
+    // Phase 6 — switch matrix
+    RUN_TEST(test_matrix_bit_index_for);
+    RUN_TEST(test_matrix_initial_state_is_zero);
+    RUN_TEST(test_matrix_idle_called_at_end_of_sweep);
+    RUN_TEST(test_matrix_debounce_on_transition);
+    RUN_TEST(test_matrix_debounce_off_transition);
+    RUN_TEST(test_matrix_rejects_single_sample_noise);
+    RUN_TEST(test_matrix_independent_cells);
+    RUN_TEST(test_matrix_force_state_masks_to_20_bits);
+    RUN_TEST(test_matrix_debounce_clamps_to_one);
     return UNITY_END();
 }
