@@ -1,0 +1,203 @@
+// app.js — vanilla JS for the px-enigma Web UI.
+'use strict';
+
+const $ = (sel) => document.querySelector(sel);
+
+// ---- nested object helpers ----
+function setNested(obj, path, val) {
+  const parts = path.split('.');
+  let o = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    o[parts[i]] = o[parts[i]] || {};
+    o = o[parts[i]];
+  }
+  o[parts[parts.length - 1]] = val;
+}
+function getNested(obj, path) {
+  const parts = path.split('.');
+  let o = obj;
+  for (const p of parts) { if (o == null) return undefined; o = o[p]; }
+  return o;
+}
+
+// ---- banner ----
+function showBanner(msg, type) {
+  const b = $('#banner');
+  b.textContent = msg;
+  b.className = type || 'warn';
+  setTimeout(() => { b.className = 'hidden'; }, 5000);
+}
+
+// ---- config form ----
+function fillForm(cfg) {
+  document.querySelectorAll('#cfg-form [name]').forEach(el => {
+    const v = getNested(cfg, el.name);
+    if (v === undefined) return;
+    if (el.type === 'checkbox') { el.checked = !!v; }
+    else if (el.tagName === 'SELECT') { el.value = String(v); }
+    else { el.value = v; }
+    if (el.type === 'range') {
+      const sp = el.parentElement.querySelector('span');
+      if (sp) sp.textContent = el.value;
+    }
+  });
+  const name = cfg.device && cfg.device.prop_name;
+  document.title = (name ? name + ' — px-enigma' : 'px-enigma');
+  $('#title').textContent = name || 'px-enigma';
+}
+
+function readForm() {
+  const out = {};
+  document.querySelectorAll('#cfg-form [name]').forEach(el => {
+    if (el.disabled) return;
+    let v;
+    if (el.type === 'checkbox') v = el.checked;
+    else if (el.type === 'number' || el.type === 'range') v = Number(el.value);
+    else v = el.value;
+    // puzzle.target: blank string → send null so the firmware stores null
+    if (el.name === 'puzzle.target' && v === '') {
+      setNested(out, el.name, null);
+      return;
+    }
+    setNested(out, el.name, v);
+  });
+  return out;
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    if (!r.ok) throw new Error('config ' + r.status);
+    const cfg = await r.json();
+    fillForm(cfg);
+    // Populate read-only AP SSID from current wifi object
+    if (cfg.wifi && cfg.wifi.ap) {
+      // The AP SSID is derived server-side from device.prop_name; show it from state
+    }
+  } catch (e) {
+    showBanner('Failed to load config: ' + e.message);
+  }
+}
+
+async function saveConfig(ev) {
+  ev.preventDefault();
+  const status = $('#save-status');
+  status.textContent = 'saving…';
+  try {
+    const body = JSON.stringify(readForm());
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { status.textContent = 'error: ' + (j.error || r.status); return; }
+    status.textContent = j.reboot_required ? 'saved — rebooting…' : 'saved ✓';
+    if (j.reboot_required) {
+      setTimeout(() => { status.textContent = ''; loadConfig(); }, 6000);
+    } else {
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    }
+  } catch (e) {
+    status.textContent = 'error: ' + e.message;
+  }
+}
+
+// ---- state ----
+async function loadState() {
+  try {
+    const r = await fetch('/api/state');
+    if (!r.ok) { $('#state-raw').textContent = 'state ' + r.status; return; }
+    const s = await r.json();
+    $('#state-raw').textContent = JSON.stringify(s, null, 2);
+
+    // Summary row updates
+    const set = (id, val) => { const el = $(id); if (el) el.textContent = val; };
+    set('#s-status',  s.status || '—');
+    set('#s-code',    (s.code && s.code.code) || '—');
+    set('#s-solved',  (s.code && s.code.solved != null) ? String(s.code.solved) : '—');
+    if (s.wifi) {
+      const sta = s.wifi.sta || {};
+      set('#s-sta',  sta.connected ? (sta.ssid + ' ' + sta.ip) : 'disconnected');
+      set('#s-rssi', sta.rssi != null ? sta.rssi + ' dBm' : '—');
+      const ap = s.wifi.ap || {};
+      set('#s-ap',   (ap.ssid || '—') + ' — ' + (ap.clients || 0) + ' client(s)');
+      if (ap.ssid) $('#ap-ssid-ro').value = ap.ssid;
+    }
+    if (s.mqtt) {
+      set('#s-mqtt', s.mqtt.connected ? ('connected to ' + s.mqtt.broker) : 'disconnected');
+    }
+    if (s.battery) {
+      const pct = s.battery.percent != null ? s.battery.percent + '%' : '';
+      const v   = s.battery.voltage_v != null ? ' ' + s.battery.voltage_v + 'V' : '';
+      set('#s-batt', (s.battery.profile || '—') + (pct ? ' ' + pct : '') + v);
+    }
+    if (s.health) {
+      const free = s.health.free_heap_bytes;
+      set('#s-heap', free != null ? Math.round(free / 1024) + ' kB' : '—');
+    }
+    const uptime = s.uptime_s;
+    if (uptime != null) {
+      const h = Math.floor(uptime / 3600), m = Math.floor((uptime % 3600) / 60), sec = uptime % 60;
+      set('#s-uptime', h + 'h ' + m + 'm ' + sec + 's');
+    }
+  } catch (e) {
+    $('#state-raw').textContent = 'error: ' + e.message;
+  }
+}
+
+// ---- log ----
+async function loadLog() {
+  try {
+    const r = await fetch('/api/log');
+    if (!r.ok) { $('#log-out').textContent = 'log ' + r.status; return; }
+    const lines = await r.json();
+    $('#log-out').textContent = Array.isArray(lines) ? lines.join('\n') : JSON.stringify(lines);
+  } catch (e) {
+    $('#log-out').textContent = 'error: ' + e.message;
+  }
+}
+
+// ---- button actions ----
+async function post(path) {
+  const r = await fetch(path, { method: 'POST' });
+  return r.json().catch(() => ({}));
+}
+
+// ---- wire everything up ----
+document.addEventListener('DOMContentLoaded', () => {
+  loadConfig();
+  loadState();
+  loadLog();
+
+  $('#cfg-form').addEventListener('submit', saveConfig);
+  $('#refresh').addEventListener('click', () => { loadState(); loadLog(); });
+  $('#refresh-log').addEventListener('click', loadLog);
+
+  $('#identify').addEventListener('click', async () => {
+    const j = await post('/api/identify');
+    showBanner(j.ok ? 'Identify triggered' : ('identify: ' + (j.error || 'error')));
+  });
+
+  $('#restart').addEventListener('click', async () => {
+    if (!confirm('Restart the device?')) return;
+    await post('/api/restart');
+    showBanner('Restarting…');
+    setTimeout(() => window.location.reload(), 6000);
+  });
+
+  $('#reset-puzzle').addEventListener('click', async () => {
+    const j = await post('/api/reset');
+    showBanner(j.ok ? 'Puzzle reset' : ('reset: ' + (j.error || 'error')));
+  });
+
+  $('#factory-reset').addEventListener('click', async () => {
+    if (!confirm('Factory reset will wipe config and reboot. Continue?')) return;
+    await post('/api/config/reset');
+    showBanner('Factory reset — rebooting…');
+    setTimeout(() => window.location.reload(), 7000);
+  });
+
+  // Auto-refresh state every 10 s
+  setInterval(loadState, 10000);
+});

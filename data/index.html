@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>px-enigma</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1 id="title">px-enigma</h1>
+    <div id="banner" class="hidden"></div>
+  </header>
+
+  <main>
+    <!-- Diagnostics -->
+    <section>
+      <h2>Status</h2>
+      <div class="btn-row">
+        <button type="button" id="refresh">Refresh</button>
+        <button type="button" id="identify">Identify</button>
+        <button type="button" id="restart">Restart</button>
+        <button type="button" id="reset-puzzle" class="warn-btn">Reset puzzle</button>
+      </div>
+      <div class="stat-grid" id="stat-grid">
+        <span class="stat-lbl">Status</span>      <span id="s-status">—</span>
+        <span class="stat-lbl">Code</span>        <span id="s-code">—</span>
+        <span class="stat-lbl">Solved</span>      <span id="s-solved">—</span>
+        <span class="stat-lbl">WiFi STA</span>    <span id="s-sta">—</span>
+        <span class="stat-lbl">RSSI</span>        <span id="s-rssi">—</span>
+        <span class="stat-lbl">AP</span>          <span id="s-ap">—</span>
+        <span class="stat-lbl">MQTT</span>        <span id="s-mqtt">—</span>
+        <span class="stat-lbl">Battery</span>    <span id="s-batt">—</span>
+        <span class="stat-lbl">Free heap</span>  <span id="s-heap">—</span>
+        <span class="stat-lbl">Uptime</span>      <span id="s-uptime">—</span>
+      </div>
+    </section>
+
+    <!-- Config form -->
+    <form id="cfg-form">
+      <fieldset>
+        <legend>Identity</legend>
+        <label>Device name   <input name="device.prop_name" /></label>
+        <label>Instance      <input name="device.instance" /></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>WiFi</legend>
+        <label>Primary SSID      <input name="wifi.primary.ssid" /></label>
+        <label>Primary password  <input name="wifi.primary.password" type="password" /></label>
+        <label>Backup SSID       <input name="wifi.backup.ssid" /></label>
+        <label>Backup password   <input name="wifi.backup.password" type="password" /></label>
+        <label>AP password       <input name="wifi.ap.password" type="password" /></label>
+        <label>AP SSID (read-only) <input id="ap-ssid-ro" disabled /></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>MQTT</legend>
+        <label>Broker host       <input name="mqtt.host" /></label>
+        <label>Broker port       <input name="mqtt.port" type="number" min="1" max="65535" /></label>
+        <label>Username          <input name="mqtt.username" /></label>
+        <label>Password          <input name="mqtt.password" type="password" /></label>
+        <label>Base topic        <input name="mqtt.base_topic" /></label>
+        <label>Announce topic    <input name="mqtt.announce_topic" /></label>
+        <label>Heartbeat (ms)    <input name="mqtt.heartbeat_interval_ms" type="number" min="1000" max="3600000" /></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Puzzle</legend>
+        <label>Mode
+          <select name="puzzle.mode">
+            <option value="live">live</option>
+            <option value="latching">latching</option>
+          </select>
+        </label>
+        <label>Target code (leave blank for none) <input name="puzzle.target" placeholder="e.g. 12-34-56" /></label>
+        <label>Identify duration (ms) <input name="puzzle.identify_duration_ms" type="number" min="100" max="30000" /></label>
+        <label>Start state
+          <select name="puzzle.start_state">
+            <option value="active">active</option>
+            <option value="off">off</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Display</legend>
+        <label>Brightness (0–15)
+          <input name="display.brightness" type="range" min="0" max="15" oninput="document.getElementById('disp-v').textContent=this.value" />
+          <span id="disp-v"></span>
+        </label>
+        <label><input name="signal_indicator.enabled" type="checkbox" /> Signal indicator enabled</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Battery</legend>
+        <label>Profile
+          <select name="battery.profile">
+            <option value="external">external (wall / bench)</option>
+            <option value="unknown">unknown</option>
+            <option value="12v-lead-acid">12 V lead-acid</option>
+            <option value="12v-LiFePO4">12 V LiFePO4</option>
+            <option value="6v-lead-acid">6 V lead-acid</option>
+            <option value="6v-LiFePO4">6 V LiFePO4</option>
+            <option value="custom">custom</option>
+          </select>
+        </label>
+        <label>Inactivity sleep (minutes, 0 = disabled) <input name="battery.inactivity_minutes" type="number" min="0" max="1440" /></label>
+        <label>Low threshold (%)     <input name="battery.low_percent"    type="number" min="0" max="100" /></label>
+        <label>Cutoff threshold (%)  <input name="battery.cutoff_percent" type="number" min="0" max="100" /></label>
+        <label>Hysteresis (%)        <input name="battery.hysteresis_pct" type="number" min="0" max="50"  /></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>OTA</legend>
+        <p>ArduinoOTA and HTTP OTA are enabled automatically.</p>
+        <p>Hostname: derived from <em>device name</em>. Password: AP password.</p>
+        <p><a href="/update">Upload firmware (web)</a></p>
+      </fieldset>
+
+      <div class="btn-row">
+        <button type="submit">Save</button>
+        <span id="save-status"></span>
+      </div>
+    </form>
+
+    <!-- Diagnostics / read-only -->
+    <section id="diag">
+      <h2>Diagnostics</h2>
+      <h3>Full state</h3>
+      <pre id="state-raw">loading…</pre>
+      <h3>Log</h3>
+      <pre id="log-out">loading…</pre>
+      <div class="btn-row">
+        <button type="button" id="refresh-log">Refresh log</button>
+        <button type="button" id="factory-reset" class="danger">Factory reset</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
