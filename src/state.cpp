@@ -1,6 +1,7 @@
 // state.cpp
 #include "state.h"
 #include "battery_monitor.h"
+#include "sleep_mgr.h"
 #include "log.h"
 #include "wifi_mgr.h"
 
@@ -99,9 +100,11 @@ void build_state(const cfg::Config& c, JsonDocument& out) {
     else                                              batt["percent"] = nullptr;
     batt["status"]  = battery_monitor::status_str(battery_monitor::status());
 
-    JsonObject sleep = out["sleep"].to<JsonObject>();
-    sleep["inactivity_minutes"] = c.battery_inactivity_minutes;
-    sleep["idle_minutes"]       = nullptr;
+    JsonObject slp = out["sleep"].to<JsonObject>();
+    slp["inactivity_minutes"] = c.battery_inactivity_minutes;
+    slp["idle_minutes"]       = sleep_mgr::enabled()
+                                  ? sleep_mgr::idle_minutes()
+                                  : (uint32_t)0;
 }
 
 void build_announce(const cfg::Config& c, JsonDocument& out) {

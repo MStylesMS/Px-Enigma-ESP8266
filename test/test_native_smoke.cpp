@@ -5,6 +5,7 @@
 // Phase 6: verify SwitchMatrix debounce, noise rejection, bit assignment.
 // Phase 7: code_engine formatter, target parser, live/latching state machines.
 // Phase 9b: battery_profiles built-in curves, custom parser, eval + resolve.
+// Phase 9c: sleep manager — profile gating, timeout maths, idle_minutes.
 //
 // config_json.cpp is included directly (test_build_src = false for native);
 // it has no LittleFS / WiFi / log dependencies.
@@ -1054,6 +1055,104 @@ void test_profile_resolve_custom_invalid_fallback() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 9c — sleep manager: profile gating, timeout maths, idle_minutes
+//
+// sleep_mgr.cpp pulls in mqtt_mgr and calls ESP.deepSleep(), so we test the
+// core arithmetic and config-gating logic inline here rather than linking the
+// full implementation.
+// ---------------------------------------------------------------------------
+
+// Mirror of sleep_mgr::begin() enable logic.
+static bool sleep_enabled_for(const cfg::Config& c, bool is_external) {
+    return !is_external && (c.battery_inactivity_minutes > 0);
+}
+
+// Mirror of sleep_mgr::idle_minutes() maths.
+static uint32_t sleep_idle_minutes(uint32_t now_ms, uint32_t last_activity_ms) {
+    return (now_ms - last_activity_ms) / 60000UL;
+}
+
+// Mirror of sleep_mgr timeout check.
+static bool sleep_should_sleep(uint32_t now_ms, uint32_t last_activity_ms,
+                                uint32_t timeout_ms) {
+    return (now_ms - last_activity_ms) >= timeout_ms;
+}
+
+void test_sleep_disabled_for_external_profile() {
+    cfg::Config c;
+    cfg::load_defaults(c);
+    // Default profile is "external" → is_external = true → disabled.
+    c.battery_inactivity_minutes = 60;
+    TEST_ASSERT_FALSE(sleep_enabled_for(c, /*is_external=*/true));
+}
+
+void test_sleep_disabled_for_zero_inactivity() {
+    cfg::Config c;
+    cfg::load_defaults(c);
+    c.battery_inactivity_minutes = 0;
+    // Battery profile, but minutes = 0 → disabled.
+    TEST_ASSERT_FALSE(sleep_enabled_for(c, /*is_external=*/false));
+}
+
+void test_sleep_enabled_for_battery_profile() {
+    cfg::Config c;
+    cfg::load_defaults(c);
+    c.battery_inactivity_minutes = 60;
+    TEST_ASSERT_TRUE(sleep_enabled_for(c, /*is_external=*/false));
+}
+
+void test_sleep_idle_minutes_zero_immediately() {
+    // At t=0, no time has elapsed → 0 idle minutes.
+    TEST_ASSERT_EQUAL_UINT32(0, sleep_idle_minutes(1000UL, 1000UL));
+}
+
+void test_sleep_idle_minutes_rounds_down() {
+    // 90 s elapsed → 1 minute (floors, not rounds).
+    uint32_t elapsed_ms = 90UL * 1000UL;
+    TEST_ASSERT_EQUAL_UINT32(1, sleep_idle_minutes(elapsed_ms, 0UL));
+}
+
+void test_sleep_idle_minutes_full_minute() {
+    // Exactly 60 s → 1 minute.
+    TEST_ASSERT_EQUAL_UINT32(1, sleep_idle_minutes(60000UL, 0UL));
+}
+
+void test_sleep_no_timeout_before_deadline() {
+    // 59 s elapsed, timeout 60 s → should NOT sleep.
+    uint32_t timeout_ms = 60UL * 1000UL;
+    TEST_ASSERT_FALSE(sleep_should_sleep(59000UL, 0UL, timeout_ms));
+}
+
+void test_sleep_timeout_at_deadline() {
+    // Exactly 60 s elapsed, timeout 60 s → SHOULD sleep.
+    uint32_t timeout_ms = 60UL * 1000UL;
+    TEST_ASSERT_TRUE(sleep_should_sleep(60000UL, 0UL, timeout_ms));
+}
+
+void test_sleep_timeout_past_deadline() {
+    // Well past deadline → should sleep.
+    uint32_t timeout_ms = 60UL * 1000UL;
+    TEST_ASSERT_TRUE(sleep_should_sleep(120000UL, 0UL, timeout_ms));
+}
+
+void test_sleep_reset_by_switch_change() {
+    // After a switch change the activity timestamp is reset.
+    // Simulate: 90 s elapsed, switch fires at 60 s → only 30 s idle.
+    uint32_t now_ms           = 90000UL;
+    uint32_t last_activity_ms = 60000UL;   // reset at 60 s
+    uint32_t timeout_ms       = 60UL * 1000UL;
+    TEST_ASSERT_FALSE(sleep_should_sleep(now_ms, last_activity_ms, timeout_ms));
+    TEST_ASSERT_EQUAL_UINT32(0, sleep_idle_minutes(now_ms, last_activity_ms));
+}
+
+void test_sleep_config_default_inactivity() {
+    // Spec §7: default inactivity_minutes = 60.
+    cfg::Config c;
+    cfg::load_defaults(c);
+    TEST_ASSERT_EQUAL_UINT32(60, c.battery_inactivity_minutes);
+}
+
+// ---------------------------------------------------------------------------
 
 int main() {
     UNITY_BEGIN();
@@ -1143,5 +1242,17 @@ int main() {
     RUN_TEST(test_profile_resolve_external_not_valid);
     RUN_TEST(test_profile_resolve_custom_valid_points);
     RUN_TEST(test_profile_resolve_custom_invalid_fallback);
+    // Phase 9c — sleep manager
+    RUN_TEST(test_sleep_disabled_for_external_profile);
+    RUN_TEST(test_sleep_disabled_for_zero_inactivity);
+    RUN_TEST(test_sleep_enabled_for_battery_profile);
+    RUN_TEST(test_sleep_idle_minutes_zero_immediately);
+    RUN_TEST(test_sleep_idle_minutes_rounds_down);
+    RUN_TEST(test_sleep_idle_minutes_full_minute);
+    RUN_TEST(test_sleep_no_timeout_before_deadline);
+    RUN_TEST(test_sleep_timeout_at_deadline);
+    RUN_TEST(test_sleep_timeout_past_deadline);
+    RUN_TEST(test_sleep_reset_by_switch_change);
+    RUN_TEST(test_sleep_config_default_inactivity);
     return UNITY_END();
 }

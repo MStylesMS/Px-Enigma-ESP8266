@@ -30,12 +30,12 @@
 #include "switch_matrix.h"
 #include "code_engine.h"
 #include "state.h"
+#include "sleep_mgr.h"
 
 // ---------------------------------------------------------------------------
 // Module tick stubs — replaced with real includes as phases are implemented.
 // ---------------------------------------------------------------------------
 
-static inline void sleep_manager_loop() {}   // Phase 9c
 // display_mgr   — Phase 9 (live)
 // battery_monitor — Phase 9 (live, partial; curves Phase 9b)
 // switch_matrix — Phase 6 (live)
@@ -43,6 +43,7 @@ static inline void sleep_manager_loop() {}   // Phase 9c
 // mqtt_mgr — Phase 5 (live)
 // web_ui — Phase 3 (live)
 // ota_mgr — Phase 4 (live)
+// sleep_mgr — Phase 9c (live)
 
 // ---------------------------------------------------------------------------
 // Device configuration (loaded from LittleFS at boot)
@@ -57,6 +58,7 @@ static uint32_t s_last_matrix_tick_ms = 0;
 static uint32_t s_last_matrix_state   = 0;
 
 code_engine::CodeEngine g_engine;
+static uint32_t s_last_code_bits = 0;  // for sleep_mgr switch-change detection
 
 static void matrix_tick() {
     // Pace ticks by the configured poll interval. SwitchMatrix itself does
@@ -82,7 +84,7 @@ static void matrix_tick() {
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=9-hw fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=9c fw=%s", FW_VERSION);
 
     bool cfg_was_invalid = false;
     cfg::load(g_config, cfg_was_invalid);
@@ -100,6 +102,7 @@ void setup() {
     display_mgr::sanity_check_boot_pins();
     g_matrix.begin(switch_matrix::esp_scan_io(), g_config.scan_debounce_samples);
     battery_monitor::begin(g_config);
+    sleep_mgr::begin(g_config);
 
     commands::begin(&g_config, &g_engine);
 
@@ -197,7 +200,14 @@ void loop() {
     matrix_tick();
     g_engine.tick(g_matrix.state());
     battery_monitor::tick();
-    sleep_manager_loop();
+
+    // Notify sleep manager of any confirmed switch-state change.
+    {
+        uint32_t cb = g_engine.state().code_bits;
+        bool changed = (cb != s_last_code_bits);
+        s_last_code_bits = cb;
+        sleep_mgr::loop(changed);
+    }
 
     // Drive display from current engine + command state.
     {
