@@ -1,7 +1,7 @@
 # px-enigma-esp8266 — Implementation Plan
 
 **Status:** Draft for review
-**Version:** 0.1.0-draft
+**Version:** 0.2.0-draft
 
 This plan turns the functional specification into ordered, independently
 testable phases. Each phase produces a working, flashable firmware
@@ -55,9 +55,15 @@ premium tier is wasted here.
 
 - LittleFS mount at boot.
 - `Config` struct + load / save / validate from `/config.json`.
-- Schema matches functional-spec §13 verbatim.
+- Schema matches functional-spec §14.2 verbatim, including
+  `puzzle.mode`, `puzzle.start_state`, `signal_indicator`, the new
+  `battery` block (profile, points, percent thresholds, calibration,
+  `inactivity_minutes`), and the unchanged `scan` block.
 - Bake defaults; on missing or corrupt file, fall back to defaults and
   emit `config_invalid` to the log (MQTT not yet present).
+- **Ship-nothing-if-missing rule.** `data/config.json` is `.gitignored`.
+  When it is absent locally, `pio run -t uploadfs` flashes no config
+  and the firmware regenerates defaults at first boot.
 - `config.json.example` checked in at repo root.
 
 **Out of scope.** WiFi, MQTT, Web UI.
@@ -142,6 +148,11 @@ the new image.
 - Workspace commands: `getState`, `restart`, `identify`, `ping`.
 - Periodic `state` publish at `heartbeat_interval_ms`.
 - `announce` on each (re)connect.
+- **Retained config override.** Subscribe to `<base_topic>/config` on
+  every (re)connect; merge any retained payload over the in-memory
+  config (top-level key replacement, no deep merge), apply silently,
+  and emit one `config_override_applied` event listing the merged
+  top-level keys. Empty retained payload clears the override.
 - Outcome event contract (`command_received`, `command_success`,
   `command_failed`, `command_warning`) + `request_id` echo.
 
@@ -186,17 +197,23 @@ machine is easy to get subtly wrong. Worth the spend.
 
 - `code_engine` module: takes a 20-bit input, emits `code_changed` /
   `code_solved` / `code_unsolved` callbacks via dependency injection.
+- **Modes.** Implement both `live` and `latching` modes per
+  functional-spec §5.2. Latching engages a single-shot `solve` event,
+  freezes display rendering on the matched code, and is cleared by the
+  `reset` command (emitting `unlatch`) or a power cycle.
 - `setTarget` parser supporting integer / digit-string / hyphenated
-  forms (functional-spec §4.4).
+  forms (functional-spec §5.4).
 - Display string formatter (`123456` → `"12-34-56"`; `123` →
   `"00-01-23"`).
-- Native unit tests for every input form + transition rule.
+- Native unit tests for every input form + transition rule, including
+  latch → reset → active and mode-switch-clears-latch.
 
 **Out of scope.** Driving displays, MQTT publishing.
 
 **Acceptance.** Unit tests cover: format edge cases, target parser
 edge cases, single-shot `code_solved` semantics, target clear, target
-update mid-match.
+update mid-match, and the latching state machine (engage / reset /
+mode-switch-clear).
 
 **Suggested model.** Mid-tier with a brief premium-tier review pass on
 the parser to catch input edge cases.
@@ -210,14 +227,17 @@ the parser to catch input edge cases.
 - Wire `code_engine` and `battery_monitor` (still hardware-stub) into
   `mqtt_mgr` so events surface on `/events` and `/warnings`.
 - Project commands: `setBrightness`, `setTarget`, `clearTarget`,
-  `getCode`, `setBatteryThresholds`, `on`, `off`.
-- State payload reflects everything in functional-spec §10.1.
+  `setMode`, `reset`, `getCode`, `setBatteryProfile`,
+  `setSignalIndicator`, `on`, `off`.
+- State payload reflects everything in functional-spec §12.1
+  (including `puzzle.mode`, `puzzle.latched`, `battery.profile/percent`,
+  `sleep.idle_minutes`).
 - Web UI form save now also publishes a `state` snapshot afterwards.
 
 **Out of scope.** Real hardware in the path.
 
 **Acceptance.** With a stub matrix that lets a host script inject a
-20-bit value, every event in functional-spec §10.2 can be triggered
+20-bit value, every event in functional-spec §12.2 can be triggered
 from a script and observed via `mosquitto_sub`.
 
 **Suggested model.** Premium tier. Cross-module integration; this is
@@ -225,28 +245,38 @@ the phase where the spec and code converge.
 
 ---
 
-## Phase 9 — Hardware bring-up (first phase requiring hardware)
+## Phase 9 — Hardware bring-up & fast cold boot (first phase requiring hardware)
 
 **Scope.**
 
+- **Boot ordering for fast cold start.** Bring up display + matrix
+  scanner before WiFi / MQTT (functional-spec §8.3, target ≤ 1.5 s
+  to first lit code). Verify with serial-timestamped log lines.
 - I2C bus init on `GPIO0 / GPIO2`.
 - HT16K33 driver wiring (`Adafruit_LEDBackpack` or in-tree wrapper).
 - Display renderer mapping the legacy `XX-YY-ZZ` digit layout, with a
   small visual test mode that walks through `00-00-00` → `99-99-99`.
+- **Optional decimal-point signal indicator** per functional-spec
+  §8.4: STA RSSI bar on dots 0–6 (5 dB steps), MQTT-connected on dot 7,
+  suppressed during `IDENTIFY` / `LOW_BATT` banner / `CRIT_BATT`.
 - Real GPIO drivers behind the `ScanIO` interface from Phase 6.
-- A0 sampling + voltage calibration; expose `raw_a0` in `/api/state`
+- A0 sampling + two-point calibration; expose `raw_a0` in `/api/state`
   for field calibration.
 - Boot-strap sanity check: log a warning if any of GPIO0/2/15 is in an
   unexpected state at the end of `setup()`.
 
-**Out of scope.** Soak / OTA validation.
+**Out of scope.** Battery profile curves (Phase 9b), sleep manager
+(Phase 9c), soak / OTA validation.
 
 **Acceptance.**
 
+- Cold boot to first lit code under 1.5 s on a representative unit.
 - Powering the prop produces the same six-digit display behavior as the
   legacy unit for every switch position checked in a sample of 8 cells.
 - Identify pattern shows `8888 8888` then resumes.
 - Reading `/api/state` over WiFi yields a sensible `battery.voltage_v`.
+- With `signal_indicator.enabled = true`, the decimal points reflect
+  STA RSSI and MQTT connectivity changes within one heartbeat.
 
 **Suggested model.** Mid-tier for the wiring; **premium tier for
 debugging** if the digit-position mapping or matrix wiring shows
@@ -254,22 +284,81 @@ discrepancies vs. the legacy unit.
 
 ---
 
+## Phase 9b — Battery profiles & monitoring
+
+**Scope.**
+
+- `battery_monitor` module owning the discharge-curve evaluator.
+- Built-in profiles: `external`, `unknown`, `12v-lead-acid`,
+  `12v-LiFePO4`, `6v-lead-acid`, `6v-LiFePO4` per functional-spec §6.3.
+- `custom` profile parser accepting both CSV (`"v:p,v:p,..."`) and
+  object-array forms (`[{v,p}, ...]`), with validation rules from §6.4.
+- Percent-based thresholds (`low_percent`, `cutoff_percent`,
+  `hysteresis_pct`) and the `LOW_BATT` / `CRIT_BATT` transitions.
+- `setBatteryProfile` command with both forms accepted; persisted to
+  `data/config.json`.
+- Native unit tests covering: each built-in profile at boundary
+  voltages, custom-curve CSV + array parsing, invalid curves →
+  `config_invalid` and fallback to `unknown`.
+
+**Out of scope.** Sleep manager (Phase 9c).
+
+**Acceptance.** Native suite passes. On hardware, swapping profiles
+through the Web UI updates `battery.percent` in `/api/state` without a
+reboot. A deliberately-bad custom curve falls back to `unknown` and
+emits `config_invalid`.
+
+**Suggested model.** Mid-tier with brief premium review of the
+curve-evaluator boundary cases.
+
+---
+
+## Phase 9c — Sleep manager
+
+**Scope.**
+
+- `sleep_manager` runs only when the configured profile enables it
+  (anything other than `external` / `unknown`).
+- Inactivity timer: any confirmed switch-state change resets it; MQTT
+  / Web UI activity does **not**. Default `inactivity_minutes = 60`,
+  configurable in `data/config.json` and via the Web UI; `0` disables.
+- On expiry: publish `going_to_sleep`, flush the log buffer, call
+  `ESP.deepSleep(0)`. Wake requires a power cycle by design.
+- Shared `state` snapshot exposes `sleep.inactivity_minutes` and
+  `sleep.idle_minutes`.
+
+**Acceptance.** With `inactivity_minutes = 1` for testing, a unit on a
+battery profile sleeps after one minute of no switch activity, emits
+the `going_to_sleep` event before sleeping, and stays asleep until
+power-cycled. With profile = `external`, no sleep occurs.
+
+**Suggested model.** Mid-tier; this is a single small state machine.
+
+---
+
 ## Phase 10 — Soak, polish, and field readiness
 
 **Scope.**
 
-- Continuous-run soak test for ≥ 24 h with a scripted MQTT load
-  (`tools/`).
+- Continuous-run soak test with a scripted MQTT load (`tools/`).
+  Configurable duration (in minutes); **default 30 minutes** for the
+  routine pre-release run, with the option to extend to multi-hour or
+  multi-day windows for release candidates.
 - Watchdog hygiene: `yield()` in any non-trivial loop; verify no
   silent reboots.
 - OTA validation end-to-end (HTTP and ArduinoOTA), including a
   "rollback by reflash" rehearsal.
+- Standalone-mode validation: pull the WiFi credentials and confirm
+  the puzzle still plays normally; reconnect and confirm event order
+  is sane.
 - Documentation pass: README, user guide, and any changes accumulated
   during implementation merged back into the spec.
 
-**Acceptance.** 24 h soak with no resets, free-heap floor stable to
-within 5 KB, MQTT reconnect count consistent with broker / WiFi
-incident count, and a known-good firmware image tagged in git.
+**Acceptance.** Default 30-minute soak completes with no resets and
+a stable free-heap floor; an extended run (≥ 8 h, configurable) is
+performed before any tagged release. MQTT reconnect count consistent
+with broker / WiFi incident count, and a known-good firmware image
+tagged in git.
 
 **Suggested model.** **Premium tier** for soak-data analysis and any
 diagnosed regressions; mid-tier for the docs sweep.

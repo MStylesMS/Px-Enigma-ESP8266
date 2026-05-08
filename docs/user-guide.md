@@ -1,7 +1,7 @@
 # px-enigma-esp8266 — User Guide
 
 **Status:** Draft for review
-**Version:** 0.1.0-draft
+**Version:** 0.2.0-draft
 
 This guide is for operators installing or maintaining the Enigma prop. For
 developer-facing documentation, see [functional-spec.md](functional-spec.md)
@@ -16,16 +16,18 @@ A wall- or panel-mounted enclosure containing:
 - A 4 × 5 grid of toggle switches.
 - Two large 4-digit 7-segment displays showing a six-digit code as
   `XX-YY-ZZ`.
-- A 12 V power input.
+- A 12 V power input (wall supply or battery, see §6).
 
 The prop publishes the displayed code over MQTT and reacts to commands
-from your show-control system.
+from your show-control system. It is also fully playable **standalone**
+with no WiFi or MQTT — the puzzle works the moment power is applied.
 
 ## 2. First-time setup
 
 1. **Power.** Connect a 12 V supply to the power input. The displays
    should illuminate and the device should begin scanning the switches
-   within ~ 2 s of power-on.
+   within ~ 1.5 s of power-on. The puzzle is fully playable from that
+   moment, before any network is up.
 
 2. **Find the device.** The Enigma brings up its own WiFi access point
    immediately, even before joining your venue's network.
@@ -62,9 +64,23 @@ The displays continuously reflect the **current state of the switches**
 as a six-digit code. Players manipulate switches and watch the code
 change in real time.
 
+The prop runs in one of two **puzzle modes** (configurable in the Web
+UI under **Puzzle**):
+
+- **Live (default).** The displayed code always tracks the switches.
+  Crossing the target boundary publishes `code_solved` (entering match)
+  and `code_unsolved` (leaving match). Players can solve and unsolve
+  freely.
+- **Latching.** When the code first matches the target, the prop
+  publishes a single `solve` event, **freezes** the matched code on
+  the display (blinking at 1 Hz so it's clearly the answer), and
+  ignores further switch motion until you send a `reset` command or
+  power-cycle the prop.
+
 When the displayed code matches the configured **target**, the prop
-publishes a `code_solved` event. Your orchestrator (PxO or equivalent)
-uses that event to advance the game.
+publishes the appropriate event (`code_solved` in live mode, `solve` in
+latching mode). Your orchestrator (PxO or equivalent) uses that event
+to advance the game.
 
 ### Setting the target code
 
@@ -79,6 +95,26 @@ Two options:
   ```
 
 Clear the target with `clearTarget` (or `setTarget` with `target: null`).
+
+### Resetting a latched puzzle
+
+In latching mode, after a `solve` event the display freezes. To re-arm
+the puzzle for the next playthrough:
+
+```json
+{ "command": "reset" }
+```
+
+A power cycle has the same effect. `reset` is a no-op in live mode.
+
+### Switching modes at runtime
+
+```json
+{ "command": "setMode", "mode": "latching" }
+```
+
+Switching from `latching` to `live` while the prop is currently latched
+clears the latch silently (no `code_unsolved` is emitted).
 
 ### Brightness
 
@@ -118,17 +154,39 @@ Topics (replace `<base>` with your configured base topic):
 | `<base>/state`    | out | full state snapshot every 10 s + on demand |
 | `<base>/events`   | out | code changes, solves, command outcomes |
 | `<base>/warnings` | out | low battery, malformed commands |
+| `<base>/config`   | in  | **retained** — fleet-wide config overrides (see below) |
 | `paradox/props`   | out | online announce on every MQTT (re)connect |
+
+### Retained config override
+
+`<base>/config` is a **retained** topic. Anything you publish to it
+with the retain flag set is delivered to the prop on every reconnect
+and merged over its in-memory configuration silently:
+
+```
+mosquitto_pub -t paradox/site1/enigma1/config -r -m '{"display":{"brightness":3}}'
+```
+
+- Top-level keys present in the override fully replace the matching
+  key in the live config; keys not present are left untouched.
+- The override is **not** persisted to `data/config.json`; it lives
+  only in RAM. Reboot reloads `data/config.json` and re-applies
+  whatever override is still retained on the broker.
+- Clear the override by publishing an **empty retained payload**:
+  `mosquitto_pub -t .../config -r -m ''`.
+
+This is the recommended way to push fleet-wide changes (broker host,
+brightness, puzzle mode) without redeploying credentials.
 
 Common subscriptions for game integration:
 
 - Subscribe to `<base>/events` and react to:
-  - `code_solved` → advance the puzzle.
+  - `code_solved` (live mode) or `solve` (latching mode) → advance the puzzle.
   - `code_changed` → update a hint timer.
 - Subscribe to `<base>/warnings` and forward `battery_low` /
   `battery_critical` to your monitoring channel.
 
-See [functional-spec.md §10](functional-spec.md) for the full list of
+See [functional-spec.md §12](functional-spec.md) for the full list of
 events, fields, and example payloads.
 
 ## 5. Updating firmware
@@ -143,23 +201,110 @@ The device reboots into the new firmware automatically.
 
 ## 6. Battery / power monitoring
 
-Even though the Enigma is designed for a permanent 12 V supply, it
-monitors that supply on `A0` and reports it in every state snapshot:
+The Enigma supports running from a battery as well as a wall supply.
+Select the source in the Web UI's **Battery** section by choosing a
+**profile**:
+
+| Profile         | Use when… |
+|-----------------|----------|
+| `external`      | Powered from a wall adapter or bench supply. Battery percent reports `100 %` and inactivity sleep is disabled. |
+| `unknown`       | You want monitoring disabled but want to keep the option open. Behaves like `external`. |
+| `12v-lead-acid` | 12 V SLA / AGM battery |
+| `12v-LiFePO4`   | 12 V LiFePO4 (4S) battery |
+| `6v-lead-acid`  | 6 V SLA battery |
+| `6v-LiFePO4`    | 6 V LiFePO4 (2S) battery |
+| `custom`        | Any other chemistry (Li-ion, LiPo, NiMH stacks, etc.) — supply your own discharge curve. |
+
+Every state snapshot reports:
 
 ```json
-"battery": { "voltage_v": 12.62, "status": "ok" }
+"battery": {
+  "profile": "12v-lead-acid",
+  "voltage_v": 12.62,
+  "percent": 78,
+  "status": "ok"
+}
 ```
 
-Status values are `ok`, `low` (≤ `low_v`, default 12.35 V), and
-`critical` (≤ `critical_v`, default 12.10 V). In `critical` the
-display blanks the code and shows `CRIT`; the matrix scanner is
-suspended to avoid drawing the supply down further.
+Status values are `ok`, `low` (below `low_percent`, default 40 %),
+`critical` (below `cutoff_percent`, default 10 %), and `external` (for
+the `external` / `unknown` profiles). In `critical` the display blanks
+the code and shows `CRIT`; the matrix scanner is suspended to avoid
+drawing the battery down further.
 
-Adjust thresholds via the Web UI's **Battery** section or:
+Thresholds (`low_percent`, `cutoff_percent`, `hysteresis_pct`) are
+adjustable in the Web UI. The percent thresholds work across every
+profile; the underlying voltages are looked up from the profile's
+discharge curve.
+
+### Custom curves and other chemistries (Li-ion, LiPo, NiMH…)
+
+Li-ion, LiPo, NiMH, or any non-listed chemistry is supported via the
+`custom` profile. Curves live in `data/config.json` only — they're
+authoring-time content, not Web-UI fields. Either form works:
 
 ```json
-{ "command": "setBatteryThresholds", "low_v": 12.20, "critical_v": 11.95 }
+"battery": {
+  "profile": "custom",
+  "points": "12.6:100,12.0:80,11.5:50,11.0:20,10.5:0"
+}
 ```
+
+```json
+"battery": {
+  "profile": "custom",
+  "points": [
+    { "v": 12.6, "p": 100 },
+    { "v": 11.5, "p": 50 },
+    { "v": 10.5, "p": 0 }
+  ]
+}
+```
+
+2 to 20 points; voltages and percents both monotonically decreasing.
+
+### ADC calibration
+
+The two-point ADC calibration constants (`adc_at_0v_raw`,
+`adc_at_full_v_raw`, `adc_full_v`) live in `data/config.json` and are
+shown read-only in the Web UI's diagnostics panel. To recalibrate, edit
+`data/config.json` and reflash the FS image (`pio run -t uploadfs`), or
+`POST /api/config` over the network.
+
+### Inactivity deep sleep
+
+When any battery profile is selected, the firmware runs an inactivity
+timer. If no switch changes are detected for `inactivity_minutes`
+(default **60**), the prop publishes a `going_to_sleep` event and
+enters deep sleep.
+
+**Wake from deep sleep requires a power cycle.** This matches the
+prop's normal lifecycle (powered on for the duration of a game, off
+between games) and prevents unattended battery drain.
+
+Set `inactivity_minutes` to `0` in the Web UI to disable auto-sleep on
+battery.
+
+### Optional WiFi / MQTT signal indicator
+
+With **Display → Signal indicator** enabled, the seven decimal-point
+lamps on the displays light to show:
+
+- Dots 0–6 (left to right): STA RSSI as a 0–7 bar (5 dB steps; full
+  scale at ≥ −55 dBm, dark below −85 dBm or when STA is disconnected).
+- Dot 7 (rightmost): MQTT broker connected.
+
+The `XX-YY-ZZ` digits are unaffected. Dots are suppressed during
+`identify`, the `LOW_BATT` banner, and `CRIT_BATT`.
+
+### Standalone (no-network) operation
+
+The Enigma is fully playable with no WiFi or MQTT broker. Network
+association runs in the background and never blocks the puzzle. If the
+prop boots without ever seeing WiFi, the displays still light, the
+switches still drive the code, and `solve` / `code_solved` events are
+still emitted to the in-RAM log (visible in the Web UI when the prop
+eventually does come online).
 
 ## 7. Troubleshooting
 

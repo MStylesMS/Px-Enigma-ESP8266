@@ -18,20 +18,32 @@
     "heartbeat_interval_ms": 10000
   },
   "puzzle": {
+    "mode": "live",
     "target": null,
-    "identify_duration_ms": 2000
+    "identify_duration_ms": 2000,
+    "start_state": "active"
   },
   "display": {
     "brightness": 1
   },
+  "signal_indicator": {
+    "enabled": true,
+    "rssi_dbm": [-55, -60, -65, -70, -75, -80, -85]
+  },
   "battery": {
-    "low_v": 12.35,
-    "critical_v": 12.10,
-    "hysteresis_v": 0.10,
-    "sample_interval_ms": 10000
+    "profile": "external",
+    "points": null,
+    "low_percent": 40,
+    "cutoff_percent": 10,
+    "hysteresis_pct": 5,
+    "sample_interval_ms": 10000,
+    "inactivity_minutes": 60,
+    "adc_at_0v_raw": 0,
+    "adc_at_full_v_raw": 1023,
+    "adc_full_v": 15.0
   },
   "scan": {
-    "dwell_ms": 10,
+    "poll_interval_ms": 10,
     "debounce_samples": 4
   }
 }

@@ -47,9 +47,15 @@ renderer reads from `code_engine`; it never owns puzzle state.
 
 - **Spec-first.** Read `docs/functional-spec.md` before changing behavior. If a
   change conflicts with the spec, propose a doc update first.
-- **MQTT topic structure is fixed:** `<base_topic>/{commands,state,events,warnings}`,
+- **Standalone-first.** WiFi and MQTT are best-effort. The puzzle must be
+  fully playable from the moment the display lights, regardless of network state.
+- **Boot priority.** Display + scanner come up before WiFi / MQTT to keep
+  cold boot under ~1.5 s. Players will normally power-cycle the prop at the
+  start of each game.
+- **MQTT topic structure is fixed:** `<base_topic>/{commands,state,events,warnings,config}`,
   plus a separate `<announce_topic>` (default `paradox/props`) that is **not**
-  derived from `base_topic`.
+  derived from `base_topic`. `<base_topic>/config` is **retained** and applied
+  silently on every (re)connect.
 - **Command envelope:** `{ "command": "lowerCamel", "request_id"?: "...", ...params }`.
   `request_id` is echoed verbatim in the corresponding `command_*` outcome event.
 - **Outcome events:** every command emits `command_received`, then exactly one of
@@ -57,13 +63,23 @@ renderer reads from `code_engine`; it never owns puzzle state.
 - **JSON field naming:** snake_case for emitted fields (`remaining_s`, `code_bits`),
   lowerCamelCase for command keys (`setBrightness`, `setTarget`).
 - **Timestamps:** ISO 8601 with millisecond precision.
-- **QoS / retain:** QoS 1 everywhere; retain off by default.
-- **Always-on AP+STA.** "Off" affects only the displays — the network surface
-  (WiFi, MQTT, Web UI, OTA) stays up at all times.
-- **Persisted config** lives in `data/config.json` (LittleFS). Commit
-  `config.json.example` at the repo root, never real credentials.
+- **QoS / retain:** QoS 1 everywhere; retain off everywhere except `<base_topic>/config`.
+- **Always-on AP+STA.** `off` affects only the displays — the network
+  surface (WiFi, MQTT, Web UI, OTA) stays up.
+- **Deep sleep policy.** Light sleep is *not* used. Deep sleep is only
+  triggered by the inactivity timer on battery profiles, and waking
+  requires a power cycle by design.
+- **Persisted config** lives in `data/config.json` (LittleFS). It is
+  `.gitignored`. The committed `config.json.example` at the repo root is
+  the schema reference. If `data/config.json` is missing the firmware
+  generates defaults at boot — **do not flash placeholder credentials**.
+- **Config visibility.** Calibration constants, custom-curve points,
+  scan timing (`scan.poll_interval_ms`, `scan.debounce_samples`), and
+  RSSI thresholds live in `data/config.json` only and are **not** editable
+  in the Web UI. The UI shows their current values read-only.
 - **Logging:** use `pxlog::info(tag, fmt, ...)` etc. — never `Serial.print*`
-  directly outside `log.cpp`.
+  directly outside `log.cpp`. Serial output is best-effort; GPIO1/3 are reused
+  by the matrix scanner (see hardware spec).
 - **MQTT publishing:** always go through `mqtt_mgr` helpers; never call the raw
   `PubSubClient` from other modules.
 
@@ -80,10 +96,13 @@ Paradox props):
 Project-specific (see `docs/functional-spec.md` for full schemas):
 
 - `setBrightness` — display brightness 0–15 (HT16K33 native range).
-- `setTarget` — set or update the target code; emits `code_solved` when matched.
-- `clearTarget` — disable target matching.
-- `getCode` — publish the current code immediately as a `code_changed` event.
-- `setBatteryThresholds` — adjust low / critical voltage thresholds.
+- `setTarget` / `clearTarget` — set or clear the target code.
+- `setMode` — switch between `live` and `latching` puzzle modes.
+- `reset` — clear `LATCHED` state and return to `ACTIVE`.
+- `getCode` — publish the current code immediately.
+- `setBatteryProfile` — select a built-in profile or supply a custom curve.
+- `setSignalIndicator` — toggle / retune the decimal-point WiFi+MQTT indicator.
+- `on` / `off` — enable / blank the display (network surface stays up).
 
 ## Hardware constraints (do not change without explicit approval)
 

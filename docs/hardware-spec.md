@@ -31,34 +31,40 @@ these states; firmware must not violate them during boot.
 
 ## 2. Power
 
+The Enigma may be powered from one of two source classes, selected by
+the `battery.profile` configuration field (see
+[functional-spec §2](functional-spec.md)):
+
+- **External / wall supply** — typically 12 V from a wall adapter. The
+  battery monitor still reads `A0` for diagnostics but reports a
+  fixed 100 % capacity and the inactivity-deep-sleep timer is
+  disabled.
+- **Battery** — 12 V SLA / LiFePO4 or 6 V SLA / LiFePO4. The monitor
+  applies the appropriate built-in discharge curve; the inactivity
+  timer triggers `ESP.deepSleep(0)` after the configured idle window.
+  Other lithium chemistries (Li-ion, LiPo) are supported via the
+  `custom` profile.
+
 | Rail | Source | Notes |
 |---|---|---|
-| VIN / 12 V | External 12 V supply | Sensed on `A0` via on-board divider |
+| VIN | External 12 V or battery | Sensed on `A0` via on-board divider |
 | 3V3 | NodeMCU on-board regulator | Powers the ESP8266 |
 | 5 V (USB) | USB during programming | Not used in production |
 
-The 12 V rail also powers the HT16K33 displays through their own onboard
+The supply also powers the HT16K33 displays through their own onboard
 5 V regulator (the displays accept 5 V VCC; the carrier boards on the
-existing units handle the 12 V → 5 V step-down). The firmware reads the
-12 V rail through `A0` to detect supply sag.
+existing units handle the step-down).
 
-**Voltage sense calibration** (legacy-validated):
+**ADC voltage-sense calibration.** Two-point calibration in
+`data/config.json` (`battery.adc_at_0v_raw`, `battery.adc_at_full_v_raw`,
+`battery.adc_full_v`). Default values reproduce the legacy linear fit
+`V = 0.0531·analogRead(A0) + 0.1978` and are documented as a starting
+point for field calibration. The Web UI shows the current calibration
+but does not edit it (see functional-spec §13.2).
 
-```
-V_supply = 0.0531 × analogRead(A0) + 0.1978
-```
-
-Default thresholds (configurable):
-
-| Threshold | Default | Behavior |
-|---|---|---|
-| `low_v` | 12.35 V | Emit `battery_low` warning; show "LOW" annunciator briefly |
-| `critical_v` | 12.10 V | Emit `battery_critical` warning; halt matrix scan, show "CRIT" |
-| Hysteresis | 0.10 V | Required to clear back to a healthier state |
-
-These thresholds are aimed at lead-acid / SLA backup batteries occasionally
-used during power transitions; on a clean 12 V wall supply both states are
-unreachable in normal operation.
+**Battery thresholds and curves** are percent-based, not voltage-based,
+and live in functional-spec §6. This document no longer carries
+voltage-level thresholds because they vary per profile.
 
 ---
 
@@ -136,11 +142,18 @@ The reuse of `GPIO1 (TX)` and `GPIO3 (RX)` as matrix lines is a legacy
 hardware decision. It means:
 
 - Serial diagnostics are best-effort during normal operation. The
-  framework still attempts `Serial.begin(115200)` for boot-time logs and
-  for upload mode, but the matrix scanner toggles those pins as soon as
-  it starts.
+  framework still attempts `Serial.begin(115200)` for boot-time logs
+  and for upload mode, but the matrix scanner toggles those pins as
+  soon as it starts.
 - Production logging relies on the in-RAM ring buffer surfaced by the
   Web UI / `/api/log` endpoint, not on serial.
+
+> **Hardware-rework note.** This is an accepted bug in the existing
+> revision and the firmware lives with it. **Any future hardware
+> revision must move the matrix lines off GPIO1 / GPIO3** (and ideally
+> off GPIO0 / GPIO2 as well, freeing dedicated I2C pins) to restore a
+> first-class serial console. Migrating to an MCU with more usable
+> GPIOs — for example ESP32-C3 or ESP32-S3 — is the cleanest path.
 
 ---
 

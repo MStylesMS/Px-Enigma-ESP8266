@@ -7,6 +7,15 @@ Authoritative GPIO table. These assignments match the existing wired units
 and **must not change** without a hardware revision. They are reflected as
 compile-time constants in `src/config.h`.
 
+> **Hardware-rework note.** GPIO1 (TX) and GPIO3 (RX) are reused as
+> matrix lines in the current revision, which disables the serial
+> console at runtime. This is an accepted bug in this hardware
+> revision. **Any future hardware spin must move the matrix lines off
+> GPIO1 / GPIO3 — and ideally off GPIO0 / GPIO2 — to restore a
+> first-class serial console and reserve dedicated I2C pins.**
+> Migrating to an MCU with more usable GPIOs (ESP32-C3 / ESP32-S3) is
+> the cleanest path.
+
 ## ESP8266 GPIO assignments
 
 | GPIO  | NodeMCU label | Direction | Role | Notes |

@@ -7,15 +7,21 @@ escape-room ecosystem.
 - **Toolchain:** PlatformIO + Arduino (`espressif8266` core)
 - **Inputs:** 4 × 5 toggle-switch matrix (20 bits)
 - **Displays:** 2 × HT16K33 4-digit 7-segment displays (I2C)
-- **Power:** 12 V supply with on-board voltage monitor
-- **Comms:** WiFi (dual-SSID failover, AP+STA always-on) + MQTT (Paradox protocol)
+- **Power:** 12 V wall supply *or* battery (4 built-in profiles +
+  custom curve, with inactivity deep-sleep on battery)
+- **Comms:** WiFi (dual-SSID failover, AP+STA always-on) + MQTT (Paradox
+  protocol), retained `<base>/config` topic for fleet overrides;
+  fully playable standalone with no network
 
-Players manipulate the switch matrix to produce a six-digit code displayed as
-`XX-XX-XX`. The current code is published over MQTT, and an optional target
-code triggers a `code_solved` event when matched — letting the game
-orchestrator drive puzzle progression without polling.
+Players manipulate the switch matrix to produce a six-digit code displayed
+as `XX-YY-ZZ`. The current code is published over MQTT, and an optional
+target code drives one of two puzzle modes: **live** (free play, with
+`code_solved` / `code_unsolved` boundary events) or **latching** (single
+`solve` event then a blinking frozen code until `reset`). The orchestrator
+uses these events to advance the game without polling.
 
-See [`docs/`](docs/) for the full specification set.
+See [`docs/`](docs/) for the full specification set, starting with
+[`docs/functional-spec.md`](docs/functional-spec.md).
 
 ## Architecture
 
@@ -24,9 +30,10 @@ single non-blocking cooperative loop. None of the modules use `delay()` or
 busy-wait on hardware.
 
 - `src/switch_matrix.*` — scans the 4 × 5 matrix, debounces, exposes 20-bit state.
-- `src/code_engine.*` — owns the current code, optional target matching, emits events.
-- `src/display_renderer.*` — formats `XX-XX-XX` across the two HT16K33 displays.
-- `src/battery_monitor.*` — A0 sampling with hysteresis (`ok` / `low` / `critical`).
+- `src/code_engine.*` — owns the displayed code, runs `live` / `latching` puzzle modes, emits events.
+- `src/display_renderer.*` — formats `XX-YY-ZZ` across the two HT16K33 displays; drives the optional WiFi/MQTT decimal-point indicator.
+- `src/battery_monitor.*` — A0 sampling with profile-based discharge curves (`ok` / `low` / `critical` / `external`).
+- `src/sleep_manager.*` — inactivity-driven deep sleep on battery profiles.
 - `src/hardware_io.*` — I2C bus and low-level GPIO/display access.
 - `src/wifi_mgr.*` — AP+STA setup with non-blocking reconnect.
 - `src/mqtt_mgr.*` — MQTT client, command dispatch, state/event publishing.
