@@ -23,6 +23,8 @@
 #include "wifi_mgr.h"
 #include "web_ui.h"
 #include "ota_mgr.h"
+#include "mqtt_mgr.h"
+#include "commands.h"
 
 // ---------------------------------------------------------------------------
 // Module tick stubs — replaced with real includes as phases are implemented.
@@ -32,7 +34,7 @@ static inline void switch_matrix_loop() {}   // Phase 6
 static inline void code_engine_loop()   {}   // Phase 7
 static inline void battery_monitor_loop() {} // Phase 9b
 static inline void sleep_manager_loop()  {}  // Phase 9c
-static inline void mqtt_mgr_loop()      {}   // Phase 5
+// mqtt_mgr — Phase 5 (live)
 // web_ui — Phase 3 (live)
 // ota_mgr — Phase 4 (live)
 
@@ -48,17 +50,22 @@ cfg::Config g_config;
 
 void setup() {
     pxlog::begin();
-    pxlog::info("main", "phase=4-ota fw=%s", FW_VERSION);
+    pxlog::info("main", "phase=5-mqtt fw=%s", FW_VERSION);
 
     bool cfg_was_invalid = false;
     cfg::load(g_config, cfg_was_invalid);
     if (cfg_was_invalid) {
         pxlog::warn("main", "config_invalid: using built-in defaults");
+        mqtt_mgr::note_config_invalid_pending();
     }
 
+    commands::begin(&g_config);
     wifi_mgr::begin(g_config);
     web_ui::begin(&g_config);
     ota_mgr::begin_arduino_ota(g_config);
+    mqtt_mgr::begin(&g_config, [](const uint8_t* p, size_t n, void*) {
+        commands::handle_command_payload(p, n);
+    }, nullptr);
 
     pxlog::info("main", "matrix_cells=%u cols=%u rows=%u",
                 MATRIX_NUM_CELLS, pins::NUM_COLS, pins::NUM_ROWS);
@@ -72,7 +79,8 @@ void loop() {
     code_engine_loop();
     battery_monitor_loop();
     sleep_manager_loop();
-    mqtt_mgr_loop();
+    mqtt_mgr::loop();
+    commands::tick();
     web_ui::loop();
     ota_mgr::loop();
     wifi_mgr::loop();

@@ -503,23 +503,36 @@ push configuration overrides without touching `data/config.json` or the
 Web UI. On every MQTT (re)connect:
 
 1. The firmware subscribes to `<base_topic>/config`.
-2. If the broker delivers a retained payload, the firmware merges it
-   over the in-memory config:
-   - Top-level keys not present in the override are left unchanged.
-   - Top-level keys present in the override fully replace the
-     corresponding key in the live config (no deep merge — predictable
-     and easier to reason about).
+2. If the broker delivers a retained payload, the firmware **deep-merges**
+   it over the in-memory config:
+   - Each leaf in the override (scalar, array, or new key) replaces the
+     corresponding leaf in the live config.
+   - Sibling keys that are *not* present in the override are left
+     unchanged. Overriding `display.brightness` does not disturb
+     `display.signal_indicator.enabled` or any other unrelated field.
+   - Arrays are atomic: an override array fully replaces the existing
+     array (no element-wise merge).
+   - The merged result is re-validated through the normal config schema;
+     a validation failure rejects the override and emits a
+     `config_invalid` warning (the live config is unchanged).
 3. The merged result is applied **silently** — no log noise, no event
    storm, no Web UI prompt.
 4. A single `config_override_applied` event is published with a
-   redacted summary of which top-level keys were overridden (no
-   values, no credentials).
+   summary of which leaf paths were merged (dotted form,
+   e.g. `"display.brightness"`, `"wifi.primary.ssid"`). The event
+   carries paths only — never values — so credentials are never echoed.
 5. Overrides are **not persisted** to `data/config.json`. They live
    only in RAM. A reboot reloads `data/config.json` and re-applies
    whatever override is still retained on the broker.
 
 To clear the override, publish an empty retained payload (`""`) to the
-topic.
+topic. This removes the retained message from the broker. At runtime
+the receiving device treats the empty payload as a **no-op** — it
+neither reloads `/config.json` nor emits an event. The empty-retained
+state simply means "no override is currently published"; on the next
+boot the device will start from `/config.json` as usual. To explicitly
+revert the running RAM config back to `/config.json` without
+rebooting, send the `reloadConfig` command (§11).
 
 This mechanism is intended for fleet management: a single retained
 publish can switch the entire fleet's MQTT broker host, brightness, or
@@ -549,6 +562,7 @@ All command payloads are JSON. Required envelope:
 | `restart`  | Reboot the device. |
 | `identify` | Enter `IDENTIFY` for `identify_duration_ms`, then resume prior state. |
 | `ping`     | Outcome event only (`pong`). |
+| `reloadConfig` | Reload `/config.json` into the running RAM config without rebooting. Drops any retained `<base_topic>/config` override that was previously deep-merged into RAM. The on-disk config is unchanged. A fresh `state` snapshot is published as part of the outcome. |
 
 ### 11.2 Project commands
 
@@ -652,7 +666,7 @@ Published on:
 | `battery_critical`        | entering `CRIT_BATT`                          | `voltage_v`, `percent`                 |
 | `battery_normal`          | recovering to `ok`                            | `voltage_v`, `percent`                 |
 | `going_to_sleep`          | inactivity timer elapsed                      | `idle_minutes`                         |
-| `config_override_applied` | retained config consumed at (re)connect       | `keys` (top-level keys merged)         |
+| `config_override_applied` | retained config consumed at (re)connect       | `keys` (dotted leaf paths merged)      |
 | `pong`                    | response to `ping`                            | `request_id`                           |
 
 Event envelope:
@@ -772,6 +786,12 @@ effect, but provides no editor.
   no `data/config.json` exists locally, **nothing is flashed for it** —
   the firmware generates a defaults-only config on first boot, the
   same one it would generate if the file were corrupted.
+- On a defaults-only first boot the firmware sets
+  `device.prop_name = "px-enigma-<MAC4>"` (last 4 hex chars of the
+  WiFi MAC address, uppercased — e.g. `"px-enigma-A1B2"`) so each
+  unit is unique on the network out-of-the-box. The user may rename
+  the prop at any time via the Web UI; the renamed value is
+  persisted on save and is not overwritten by subsequent reboots.
 - The boot sequence is:
   1. Mount LittleFS.
   2. Load `/config.json`; on failure, log a `config_invalid` warning

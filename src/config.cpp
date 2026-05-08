@@ -26,6 +26,10 @@ String mac_suffix() {
     return String(buf);
 }
 
+String default_prop_name() {
+    return String("px-enigma-") + mac_suffix();
+}
+
 static bool read_file(const char* path, String& out) {
     File f = LittleFS.open(path, "r");
     if (!f) return false;
@@ -60,7 +64,13 @@ bool load(Config& c, bool& was_invalid) {
     load_defaults(c);
 
     if (!LittleFS.exists(PATH)) {
-        pxlog::info(TAG, "no /config.json; using built-in defaults");
+        // First boot on this device: apply MAC-derived unique prop_name so
+        // multiple units on the same network don't collide. The user can
+        // still rename via the Web UI; the rename will be persisted on
+        // first save.
+        c.prop_name = default_prop_name();
+        pxlog::info(TAG, "no /config.json; using built-in defaults (prop_name=%s)",
+                    c.prop_name.c_str());
         return true;
     }
 
@@ -80,6 +90,7 @@ bool load(Config& c, bool& was_invalid) {
         LittleFS.rename(PATH, PATH_BAD);
         was_invalid = true;
         load_defaults(c);
+        c.prop_name = default_prop_name();
         save(c);
         return true;
     }
@@ -92,6 +103,7 @@ bool load(Config& c, bool& was_invalid) {
         LittleFS.rename(PATH, PATH_BAD);
         was_invalid = true;
         load_defaults(c);
+        c.prop_name = default_prop_name();
         save(c);
         return true;
     }

@@ -186,6 +186,11 @@ void to_json(const Config& c, JsonDocument& out);
 // Last 4 hex chars of the WiFi MAC address (e.g., "A1B2"). Needs WiFi stack up.
 String mac_suffix();
 
+// Returns the factory-default prop_name for this device, derived from the
+// MAC suffix so each unit is unique out-of-the-box: e.g. "px-enigma-A1B2".
+// The user may override via the Web UI at any time.
+String default_prop_name();
+
 // Mount LittleFS + load /config.json into c. On parse/schema failure: renames the
 // bad file to /config.bad.json, resets to defaults, sets was_invalid=true.
 // Always returns true — firmware is always usable after this call.

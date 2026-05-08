@@ -18,6 +18,8 @@
 #include "log.h"
 #include "wifi_mgr.h"
 #include "ota_mgr.h"
+#include "state.h"
+#include "commands.h"
 
 #include <ArduinoJson.h>
 #include <ESP8266WebServer.h>
@@ -169,62 +171,8 @@ static void handle_post_config_reset() {
 
 static void handle_get_state() {
     if (!heap_ok()) { send_err(503, "low heap"); return; }
-    // Build a best-effort state snapshot. Modules not yet implemented
-    // (code engine, battery, MQTT) emit null or placeholder values.
     JsonDocument doc;
-    doc["application"] = "px-enigma-esp8266";
-    doc["instance"]    = s_cfg->instance;
-    doc["version"]     = FW_VERSION;
-    doc["uptime_s"]    = millis() / 1000;
-
-    JsonObject health = doc["health"].to<JsonObject>();
-    health["free_heap_bytes"] = (uint32_t)ESP.getFreeHeap();
-
-    JsonObject wifi = doc["wifi"].to<JsonObject>();
-    JsonObject sta = wifi["sta"].to<JsonObject>();
-    sta["connected"] = wifi_mgr::sta_connected();
-    sta["ssid"]      = wifi_mgr::sta_ssid();
-    sta["rssi"]      = wifi_mgr::sta_rssi();
-    sta["ip"]        = wifi_mgr::sta_ip();
-    JsonObject ap = wifi["ap"].to<JsonObject>();
-    ap["ssid"]    = wifi_mgr::ap_ssid();
-    ap["ip"]      = wifi_mgr::ap_ip();
-    ap["clients"] = wifi_mgr::ap_clients();
-
-    // MQTT — not yet implemented
-    JsonObject mqtt = doc["mqtt"].to<JsonObject>();
-    mqtt["connected"] = false;
-    mqtt["broker"]    = s_cfg->mqtt_host + ":" + String(s_cfg->mqtt_port);
-
-    // Puzzle — code engine not yet implemented
-    JsonObject puzzle = doc["puzzle"].to<JsonObject>();
-    puzzle["mode"]    = s_cfg->puzzle_mode;
-    puzzle["latched"] = false;
-
-    JsonObject code_obj = doc["code"].to<JsonObject>();
-    code_obj["code"]      = nullptr;
-    code_obj["code_int"]  = nullptr;
-    code_obj["code_bits"] = nullptr;
-    if (s_cfg->puzzle_has_target) code_obj["target"] = s_cfg->puzzle_target.c_str();
-    else                           code_obj["target"] = nullptr;
-    code_obj["solved"]    = false;
-
-    JsonObject disp = doc["display"].to<JsonObject>();
-    disp["brightness"]       = s_cfg->display_brightness;
-    disp["blanked"]          = false;
-    disp["signal_indicator"] = s_cfg->signal_indicator_enabled;
-
-    // Battery — monitor not yet implemented
-    JsonObject batt = doc["battery"].to<JsonObject>();
-    batt["profile"]   = s_cfg->battery_profile;
-    batt["voltage_v"] = nullptr;
-    batt["percent"]   = nullptr;
-    batt["status"]    = "external";
-
-    JsonObject sleep = doc["sleep"].to<JsonObject>();
-    sleep["inactivity_minutes"] = s_cfg->battery_inactivity_minutes;
-    sleep["idle_minutes"]       = nullptr;
-
+    appstate::build_state(*s_cfg, doc);
     send_json(200, doc);
 }
 
@@ -241,21 +189,19 @@ static void handle_get_log() {
 }
 
 static void handle_post_identify() {
-    // Placeholder — display/identify not yet implemented.
-    pxlog::info(TAG, "identify requested (display not yet initialised)");
+    commands::identify();
     send_ok();
 }
 
 static void handle_post_reset() {
-    // Placeholder — puzzle engine not yet implemented.
+    // Placeholder — puzzle engine not yet implemented (Phase 7).
     pxlog::info(TAG, "reset requested (puzzle engine not yet initialised)");
     send_ok();
 }
 
 static void handle_post_restart() {
     send_ok();
-    s_reboot_pending = true;
-    s_reboot_at = millis() + 500;
+    commands::schedule_restart(500);
     pxlog::info(TAG, "restart requested via HTTP");
 }
 
