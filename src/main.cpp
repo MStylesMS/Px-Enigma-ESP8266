@@ -1,33 +1,61 @@
-// px-enigma-esp8266 — boot skeleton (Phase 0)
+// px-enigma-esp8266 — main.cpp
 //
-// The full module layout described in docs/implementation-plan.md is built
-// out incrementally. This file currently does just enough to exercise the
-// PlatformIO build and produce a boot banner on the serial console.
-
+// Cooperative-loop firmware skeleton. Modules are wired in here as they are
+// implemented across phases. All modules must be non-blocking; no module may
+// call delay() or busy-wait on I/O.
+//
+// Boot order (fast cold start — see docs/functional-spec.md §8.3):
+//   1. Serial + logging                (Phase 0  — now)
+//   2. Config load from LittleFS       (Phase 1)
+//   3. Display init + matrix scanner   (Phase 9  — first lit code ≤ 1.5 s)
+//   4. WiFi (AP+STA)                   (Phase 2)
+//   5. Web UI + OTA                    (Phase 3 / 4)
+//   6. MQTT                            (Phase 5)
+//   7. Battery monitor + sleep manager (Phase 9b / 9c)
+//
+// Cooperative loop order (repeated every iteration):
+//   switch_matrix → code_engine → battery_monitor → sleep_manager →
+//   mqtt_mgr → web_ui → ota_mgr → wifi_mgr
 #include <Arduino.h>
 
-#ifndef FW_VERSION
-#define FW_VERSION "0.0.0-skeleton"
-#endif
+#include "config.h"
+#include "log.h"
 
-static unsigned long g_last_heartbeat_ms = 0;
+// ---------------------------------------------------------------------------
+// Module tick stubs — replaced with real includes as phases are implemented.
+// ---------------------------------------------------------------------------
+
+static inline void switch_matrix_loop() {}   // Phase 6
+static inline void code_engine_loop()   {}   // Phase 7
+static inline void battery_monitor_loop() {} // Phase 9b
+static inline void sleep_manager_loop()  {}  // Phase 9c
+static inline void mqtt_mgr_loop()      {}   // Phase 5
+static inline void web_ui_loop()        {}   // Phase 3
+static inline void ota_mgr_loop()       {}   // Phase 4
+static inline void wifi_mgr_loop()      {}   // Phase 2
+
+// ---------------------------------------------------------------------------
+// Arduino entry points
+// ---------------------------------------------------------------------------
 
 void setup() {
-    Serial.begin(115200);
-    delay(50);  // brief settle so the first banner is not garbled by the bootrom
-    Serial.println();
-    Serial.println(F("px-enigma-esp8266 boot"));
-    Serial.print(F("  fw_version="));
-    Serial.println(F(FW_VERSION));
-    Serial.println(F("  status=phase-0-skeleton"));
+    pxlog::begin();
+    pxlog::info("main", "phase=0-skeleton fw=%s", FW_VERSION);
+    pxlog::info("main", "matrix_cells=%u cols=%u rows=%u",
+                MATRIX_NUM_CELLS, pins::NUM_COLS, pins::NUM_ROWS);
+    pxlog::info("main", "i2c sda=%u scl=%u display_low=0x%02x display_high=0x%02x",
+                pins::I2C_SDA, pins::I2C_SCL,
+                i2c_addr::DISPLAY_LOW, i2c_addr::DISPLAY_HIGH);
 }
 
 void loop() {
-    const unsigned long now = millis();
-    if (now - g_last_heartbeat_ms >= 5000UL) {
-        g_last_heartbeat_ms = now;
-        Serial.print(F("alive uptime_ms="));
-        Serial.println(now);
-    }
+    switch_matrix_loop();
+    code_engine_loop();
+    battery_monitor_loop();
+    sleep_manager_loop();
+    mqtt_mgr_loop();
+    web_ui_loop();
+    ota_mgr_loop();
+    wifi_mgr_loop();
     yield();
 }
