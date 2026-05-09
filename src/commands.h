@@ -17,6 +17,10 @@ namespace commands {
 // commands that need it will return command_failed("not_initialised").
 void begin(cfg::Config* c, code_engine::CodeEngine* engine = nullptr);
 
+// Re-apply puzzle mode/target from the in-memory config to the live engine.
+// Used by the Web UI config endpoint after a successful save.
+void sync_engine_from_config();
+
 // Handle a payload that arrived on the commands topic (called from mqtt_mgr).
 void handle_command_payload(const uint8_t* payload, size_t len);
 
@@ -24,6 +28,10 @@ void handle_command_payload(const uint8_t* payload, size_t len);
 // just sets a timer + flag. The display layer (Phase 9) will read the flag.
 void identify();
 bool identify_active();
+
+// Puzzle reset: clear the latch (unlatches latching-mode; no-op in live mode).
+// Publishes an updated state snapshot via MQTT. Safe to call from web_ui.
+void reset_puzzle();
 
 // Schedule a deferred restart so the calling handler can return / publish
 // outcome events before the device reboots.

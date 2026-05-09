@@ -793,14 +793,14 @@ void test_engine_set_target_latching_no_match_no_solve() {
 //
 // The digit-position layout contract being tested:
 //   For code "XX-YY-ZZ" (XX = code/10000, YY = (code/100)%100, ZZ = code%100):
-//     display_low [0]  = XX / 10
+//     display_high[0]  = XX / 10   (leftmost)
 //     display_high[1]  = XX % 10
 //     display_high[3]  = dash
-//     display_low [4]  = YY / 10
-//     display_high[0]  = YY % 10
+//     display_high[4]  = YY / 10
+//     display_low [0]  = YY % 10
 //     display_low [1]  = dash
 //     display_low [3]  = ZZ / 10
-//     display_high[4]  = ZZ % 10
+//     display_low [4]  = ZZ % 10   (rightmost)
 // ---------------------------------------------------------------------------
 
 // Helper: parse "XX-YY-ZZ" string → xx, yy, zz integers.
@@ -823,12 +823,12 @@ void test_display_digit_position_parse() {
 
 void test_display_digit_position_xx_yy_zz_parts() {
     // Pin the digit decomposition used by render_code() for "12-34-56":
-    //   display_low[0]  = xx / 10 = 1
+    //   display_high[0] = xx / 10 = 1
     //   display_high[1] = xx % 10 = 2
-    //   display_low[4]  = yy / 10 = 3
-    //   display_high[0] = yy % 10 = 4
+    //   display_high[4] = yy / 10 = 3
+    //   display_low[0]  = yy % 10 = 4
     //   display_low[3]  = zz / 10 = 5
-    //   display_high[4] = zz % 10 = 6
+    //   display_low[4]  = zz % 10 = 6
     char buf[9];
     code_engine::format_code(123456, buf);
     int xx, yy, zz;

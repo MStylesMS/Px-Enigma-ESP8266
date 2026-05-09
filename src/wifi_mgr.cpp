@@ -14,6 +14,7 @@ static const char* TAG = "wifi";
 
 static ESP8266WiFiMulti s_multi;
 static String           s_ap_ssid;
+static String           s_mdns_host;
 static uint32_t         s_last_check    = 0;
 static bool             s_was_connected = false;
 static int              s_last_ap_clients = -1;
@@ -67,7 +68,8 @@ void begin(const cfg::Config& c) {
     }
 
     // --- AP ---
-    s_ap_ssid = network_name_from_prop(c.prop_name);
+    s_ap_ssid = String("Px-Enigma-") + cfg::mac_suffix();
+    s_mdns_host = network_name_from_prop(c.prop_name);
     IPAddress ip(192, 168, 4, 1), gw(192, 168, 4, 1), nm(255, 255, 255, 0);
     WiFi.softAPConfig(ip, gw, nm);
     bool ok = WiFi.softAP(s_ap_ssid.c_str(),
@@ -132,7 +134,7 @@ String ap_ssid()       { return s_ap_ssid; }
 int    ap_clients()    { return WiFi.softAPgetStationNum(); }
 
 String mac_address()   { return WiFi.macAddress(); }
-String mdns_hostname() { return s_ap_ssid.length() ? s_ap_ssid : String("px-enigma"); }
+String mdns_hostname() { return s_mdns_host.length() ? s_mdns_host : String("px-enigma"); }
 String mdns_fqdn()     { return mdns_hostname() + ".local"; }
 
 } // namespace wifi_mgr

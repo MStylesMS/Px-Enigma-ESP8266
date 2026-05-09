@@ -58,6 +58,39 @@ void begin(cfg::Config* c, code_engine::CodeEngine* engine) {
     s_engine = engine;
 }
 
+void sync_engine_from_config() {
+    if (!s_cfg || !s_engine) return;
+
+    if (s_cfg->puzzle_mode == cfg::PUZZLE_MODE_LATCHING) {
+        s_engine->set_mode(code_engine::Mode::Latching);
+    } else {
+        s_engine->set_mode(code_engine::Mode::Live);
+    }
+
+    if (s_cfg->puzzle_has_target) {
+        uint32_t tgt = 0;
+        if (code_engine::parse_target(s_cfg->puzzle_target.c_str(), &tgt)) {
+            s_engine->set_target(true, tgt);
+        } else {
+            s_engine->set_target(false, 0);
+            s_cfg->puzzle_has_target = false;
+            s_cfg->puzzle_target = "";
+            cfg::save(*s_cfg);
+        }
+    } else {
+        s_engine->set_target(false, 0);
+    }
+
+    mqtt_mgr::publish_state();
+}
+
+void reset_puzzle() {
+    if (!s_engine) return;
+    s_engine->reset();
+    mqtt_mgr::publish_state();
+    pxlog::info(TAG, "puzzle reset (unlatch)");
+}
+
 void identify() {
     s_identify_active = true;
     uint32_t dur = s_cfg ? s_cfg->puzzle_identify_duration_ms : 2000;

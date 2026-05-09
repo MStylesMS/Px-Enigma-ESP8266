@@ -66,11 +66,13 @@ namespace {
 struct SwitchLayoutConfig {
     uint8_t row_a[switch_matrix::NUM_ROWS];
     uint8_t col_b[switch_matrix::NUM_COLS];
+    uint8_t digit_order[6];
 };
 
 static void load_switch_layout_defaults(SwitchLayoutConfig& m) {
     for (uint8_t i = 0; i < switch_matrix::NUM_ROWS; ++i) m.row_a[i] = i;
     for (uint8_t i = 0; i < switch_matrix::NUM_COLS; ++i) m.col_b[i] = i;
+    for (uint8_t i = 0; i < 6; ++i) m.digit_order[i] = (uint8_t)(i + 1);
 }
 
 static bool is_perm_0_n(const uint8_t* vals, uint8_t n) {
@@ -99,7 +101,8 @@ static bool load_switch_layout_file(SwitchLayoutConfig& out) {
 
     JsonObject row_obj = doc["row_gpio_to_a"].as<JsonObject>();
     JsonObject col_obj = doc["col_gpio_to_b"].as<JsonObject>();
-    if (row_obj.isNull() || col_obj.isNull()) {
+    JsonArray digit_order = doc["digit_order"].as<JsonArray>();
+    if (row_obj.isNull() || col_obj.isNull() || digit_order.isNull() || digit_order.size() != 6) {
         pxlog::warn("main", "switch_layout.json missing required mapping keys");
         return false;
     }
@@ -125,6 +128,17 @@ static bool load_switch_layout_file(SwitchLayoutConfig& out) {
         pxlog::warn("main", "switch_layout.json has non-permutation mapping");
         return false;
     }
+
+    bool seen_digit[6] = {false};
+    for (uint8_t i = 0; i < 6; ++i) {
+        int d = digit_order[i].as<int>();
+        if (d < 1 || d > 6 || seen_digit[d - 1]) {
+            pxlog::warn("main", "switch_layout.json has invalid digit_order");
+            return false;
+        }
+        out.digit_order[i] = (uint8_t)d;
+        seen_digit[d - 1] = true;
+    }
     return true;
 }
 
@@ -140,6 +154,11 @@ static void apply_switch_layout(const SwitchLayoutConfig& m) {
     if (!g_matrix.set_bit_map(bit_map)) {
         g_matrix.reset_bit_map_identity();
         pxlog::warn("main", "switch layout bit map invalid; identity fallback");
+    }
+
+    if (!code_engine::set_digit_order(m.digit_order)) {
+        code_engine::reset_digit_order();
+        pxlog::warn("main", "switch layout digit_order invalid; identity fallback");
     }
 }
 
