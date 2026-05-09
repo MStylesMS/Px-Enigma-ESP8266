@@ -20,3 +20,4 @@ data/secrets.json
 
 # Tooling artifacts
 tools/**/node_modules/
+logs/

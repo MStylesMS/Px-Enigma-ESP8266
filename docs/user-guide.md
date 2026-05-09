@@ -56,6 +56,11 @@ with no WiFi or MQTT — the puzzle works the moment power is applied.
    reboot only if necessary (changing WiFi credentials usually requires
    a reboot).
 
+8. **Instance meaning.** In the Web UI, **Identity → Instance** is the
+  prop instance ID (default `enigma1`). It is included in state/announce
+  payloads and MQTT metadata so multiple Enigma units can be uniquely
+  identified in one deployment.
+
 ## 3. Day-to-day operation
 
 ### What the displays show
@@ -200,6 +205,44 @@ Two over-the-air paths, both reachable on AP or LAN:
 - **ArduinoOTA:** `pio run -t upload --upload-port <prop-name>.local`.
 
 The device reboots into the new firmware automatically.
+
+## 5.1 Updating switch_layout.json and selected web assets via curl
+
+You can download and upload `switch_layout.json` directly over HTTP.
+
+Download current layout from the prop:
+
+```bash
+curl --fail --silent --show-error \
+  http://10.0.0.100/switch_layout.json \
+  -o ./tmp/switch_layout.json
+```
+
+Upload edited layout back to the prop:
+
+```bash
+curl --fail --silent --show-error \
+  -X POST "http://10.0.0.100/api/files/upload" \
+  -F "path=/switch_layout.json" \
+  -F "file=@./tmp/switch_layout.json;type=application/json"
+```
+
+Notes:
+
+- `switch_layout.json` uploads are JSON-validated.
+- `switch_layout.json` changes require a restart before firmware scan
+  mapping is updated.
+- The same upload endpoint supports an allowlisted set of files such as
+  `/config.json` and `/logo.png`.
+
+Example logo upload:
+
+```bash
+curl --fail --silent --show-error \
+  -X POST "http://10.0.0.100/api/files/upload" \
+  -F "path=/logo.png" \
+  -F "file=@./data/logo.png;type=image/png"
+```
 
 ## 6. Battery / power monitoring
 
