@@ -3,23 +3,22 @@
 // Phase 9: I2C bus, Adafruit_7segment driver, legacy digit-position layout,
 // signal indicator (decimal points), IDENTIFY, OFF, LATCHED blink.
 //
-// Legacy digit-position layout (replicated verbatim from archive/enigma/enigma.ino):
+// Physical digit-position layout:
 //
-//   Display naming:
-//     display_high (0x71) = clockDisplay1 in legacy
-//     display_low  (0x70) = clockDisplay2 in legacy
+//   display_high (0x71) is mounted on the LEFT  — shows first three digits (XX-Y)
+//   display_low  (0x70) is mounted on the RIGHT — shows last three digits (Y-ZZ)
 //
 //   For code "XX-YY-ZZ"  (XX = code/10000, YY = (code/100)%100, ZZ = code%100):
-//     display_low [0]  = tens  of XX
+//     display_high[0]  = tens  of XX   (leftmost digit)
 //     display_high[1]  = ones  of XX
 //     display_high[3]  = dash  (between XX and YY)
-//     display_low [4]  = tens  of YY
-//     display_high[0]  = ones  of YY
+//     display_high[4]  = tens  of YY
+//     display_low [0]  = ones  of YY
 //     display_low [1]  = dash  (between YY and ZZ)
 //     display_low [3]  = tens  of ZZ
-//     display_high[4]  = ones  of ZZ
+//     display_low [4]  = ones  of ZZ   (rightmost digit)
 //
-// A unit test (test_native_smoke.cpp Phase 9 section) pins this mapping.
+// A unit test (test_native_smoke.cpp Phase 9 section) pins the parse arithmetic.
 #include "display_mgr.h"
 #include "commands.h"
 #include "log.h"
@@ -139,15 +138,15 @@ static int rssi_bars(int rssi_dbm, const int8_t thresholds[cfg::RSSI_THRESHOLDS]
     return 0;
 }
 
-// Signal indicator decimal-point bit-to-position mapping (informational):
-//   bit 0: display_low  pos 0  (leftmost visible position)
-//   bit 1: display_high pos 1
-//   bit 2: display_high pos 3
-//   bit 3: display_low  pos 4
-//   bit 4: display_high pos 0
-//   bit 5: display_low  pos 1
-//   bit 6: display_low  pos 3
-//   bit 7: display_high pos 4  (MQTT connected dot)
+// Signal indicator decimal-point bit-to-position mapping (left to right):
+//   bit 0: display_high pos 0  (leftmost — tens of XX)
+//   bit 1: display_high pos 1  (ones of XX)
+//   bit 2: display_high pos 3  (dash between XX and YY)
+//   bit 3: display_high pos 4  (tens of YY)
+//   bit 4: display_low  pos 0  (ones of YY)
+//   bit 5: display_low  pos 1  (dash between YY and ZZ)
+//   bit 6: display_low  pos 3  (tens of ZZ)
+//   bit 7: display_low  pos 4  (rightmost — MQTT connected dot)
 // Applied directly in render_code() via (dp_bits >> N) & 1 checks.
 
 // ---------------------------------------------------------------------------
@@ -167,22 +166,22 @@ static void render_code(const char* code_str, uint8_t dp_bits) {
         zz = (code_str[6] - '0') * 10 + (code_str[7] - '0');
     }
 
-    // Legacy mapping (see file header):
-    if (s_lo_ok) {
-        s_lo.writeDigitNum(0, xx / 10, (dp_bits & (1 << 0)) != 0);
-        s_lo.writeDigitRaw(1, SEG_DASH | dp_mask_for_pos((dp_bits & (1 << 5)) != 0));
-        s_lo.writeDigitNum(3, zz / 10, (dp_bits & (1 << 6)) != 0);
-        s_lo.writeDigitNum(4, yy / 10, (dp_bits & (1 << 3)) != 0);
-        s_lo.writeDigitRaw(2, 0);  // colon off
-        s_lo.writeDisplay();
-    }
+    // Physical layout: display_high on left, display_low on right (see file header).
     if (s_hi_ok) {
-        s_hi.writeDigitNum(0, yy % 10, (dp_bits & (1 << 4)) != 0);
+        s_hi.writeDigitNum(0, xx / 10, (dp_bits & (1 << 0)) != 0);
         s_hi.writeDigitNum(1, xx % 10, (dp_bits & (1 << 1)) != 0);
-        s_hi.writeDigitRaw(3, SEG_DASH | dp_mask_for_pos((dp_bits & (1 << 2)) != 0));
-        s_hi.writeDigitNum(4, zz % 10, (dp_bits & (1 << 7)) != 0);
         s_hi.writeDigitRaw(2, 0);  // colon off
+        s_hi.writeDigitRaw(3, SEG_DASH | dp_mask_for_pos((dp_bits & (1 << 2)) != 0));
+        s_hi.writeDigitNum(4, yy / 10, (dp_bits & (1 << 3)) != 0);
         s_hi.writeDisplay();
+    }
+    if (s_lo_ok) {
+        s_lo.writeDigitNum(0, yy % 10, (dp_bits & (1 << 4)) != 0);
+        s_lo.writeDigitRaw(1, SEG_DASH | dp_mask_for_pos((dp_bits & (1 << 5)) != 0));
+        s_lo.writeDigitRaw(2, 0);  // colon off
+        s_lo.writeDigitNum(3, zz / 10, (dp_bits & (1 << 6)) != 0);
+        s_lo.writeDigitNum(4, zz % 10, (dp_bits & (1 << 7)) != 0);
+        s_lo.writeDisplay();
     }
 }
 

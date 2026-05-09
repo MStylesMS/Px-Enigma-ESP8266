@@ -1,8 +1,8 @@
 // wifi_mgr.h — AP+STA always-on WiFi manager for px-enigma-esp8266.
 //
 // Starts WIFI_AP_STA at boot. STA uses ESP8266WiFiMulti for primary + backup
-// credentials. AP SSID is derived from device.prop_name (normalised to
-// lowercase-hyphenated). Both interfaces remain up concurrently; STA
+// credentials. AP SSID uses fixed format "Px-Enigma-XXXX" where XXXX is the
+// upper-case hex suffix of the MAC. Both interfaces remain up concurrently; STA
 // reconnects non-blockingly in loop().
 #pragma once
 

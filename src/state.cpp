@@ -17,6 +17,12 @@ void reset_heap_watermark() { s_min_free_heap_bytes = UINT32_MAX; }
 void set_mqtt_connected(bool v) { s_mqtt_connected = v; }
 bool mqtt_connected() { return s_mqtt_connected; }
 void set_code_state(const code_engine::CodeState* cs) { s_code_state = cs; }
+bool get_code_snapshot(uint32_t* code_bits, const char** code_str) {
+    if (!s_code_state) return false;
+    if (code_bits) *code_bits = s_code_state->code_bits;
+    if (code_str) *code_str = s_code_state->code_str;
+    return true;
+}
 
 static void write_iso_timestamp(char* out, size_t out_size) {
     // No NTP yet; emit uptime-based marker (matches clock project convention).

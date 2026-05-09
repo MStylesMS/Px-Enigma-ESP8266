@@ -17,6 +17,7 @@
 //   switch_matrix → code_engine → battery_monitor → sleep_manager →
 //   mqtt_mgr → web_ui → ota_mgr → wifi_mgr
 #include <Arduino.h>
+#include <LittleFS.h>
 
 #include "config.h"
 #include "log.h"
@@ -60,6 +61,109 @@ static uint32_t s_last_matrix_state   = 0;
 code_engine::CodeEngine g_engine;
 static uint32_t s_last_code_bits = 0;  // for sleep_mgr switch-change detection
 
+namespace {
+
+struct SwitchLayoutConfig {
+    uint8_t row_a[switch_matrix::NUM_ROWS];
+    uint8_t col_b[switch_matrix::NUM_COLS];
+    uint8_t digit_order[6];
+};
+
+static void load_switch_layout_defaults(SwitchLayoutConfig& m) {
+    for (uint8_t i = 0; i < switch_matrix::NUM_ROWS; ++i) m.row_a[i] = i;
+    for (uint8_t i = 0; i < switch_matrix::NUM_COLS; ++i) m.col_b[i] = i;
+    for (uint8_t i = 0; i < 6; ++i) m.digit_order[i] = (uint8_t)(i + 1);
+}
+
+static bool is_perm_0_n(const uint8_t* vals, uint8_t n) {
+    bool seen[20] = {false};
+    for (uint8_t i = 0; i < n; ++i) {
+        if (vals[i] >= n || seen[vals[i]]) return false;
+        seen[vals[i]] = true;
+    }
+    return true;
+}
+
+static bool load_switch_layout_file(SwitchLayoutConfig& out) {
+    File f = LittleFS.open("/switch_layout.json", "r");
+    if (!f) {
+        pxlog::warn("main", "switch_layout.json missing; using identity maps");
+        return false;
+    }
+
+    JsonDocument doc;
+    DeserializationError de = deserializeJson(doc, f);
+    f.close();
+    if (de) {
+        pxlog::warn("main", "switch_layout.json parse failed: %s", de.c_str());
+        return false;
+    }
+
+    JsonObject row_obj = doc["row_gpio_to_a"].as<JsonObject>();
+    JsonObject col_obj = doc["col_gpio_to_b"].as<JsonObject>();
+    JsonArray digit_order = doc["digit_order"].as<JsonArray>();
+    if (row_obj.isNull() || col_obj.isNull() || digit_order.isNull() || digit_order.size() != 6) {
+        pxlog::warn("main", "switch_layout.json missing required mapping keys");
+        return false;
+    }
+
+    for (uint8_t r = 0; r < switch_matrix::NUM_ROWS; ++r) {
+        String k = String(pins::ROW[r]);
+        JsonVariant v = row_obj[k];
+        if (v.isNull()) return false;
+        int a = v.as<int>();
+        if (a < 0 || a >= switch_matrix::NUM_ROWS) return false;
+        out.row_a[r] = (uint8_t)a;
+    }
+    for (uint8_t c = 0; c < switch_matrix::NUM_COLS; ++c) {
+        String k = String(pins::COL[c]);
+        JsonVariant v = col_obj[k];
+        if (v.isNull()) return false;
+        int b = v.as<int>();
+        if (b < 0 || b >= switch_matrix::NUM_COLS) return false;
+        out.col_b[c] = (uint8_t)b;
+    }
+    if (!is_perm_0_n(out.row_a, switch_matrix::NUM_ROWS) ||
+        !is_perm_0_n(out.col_b, switch_matrix::NUM_COLS)) {
+        pxlog::warn("main", "switch_layout.json has non-permutation mapping");
+        return false;
+    }
+
+    bool seen_digit[6] = {false};
+    for (uint8_t i = 0; i < 6; ++i) {
+        int d = digit_order[i].as<int>();
+        if (d < 1 || d > 6 || seen_digit[d - 1]) {
+            pxlog::warn("main", "switch_layout.json has invalid digit_order");
+            return false;
+        }
+        out.digit_order[i] = (uint8_t)d;
+        seen_digit[d - 1] = true;
+    }
+    return true;
+}
+
+static void apply_switch_layout(const SwitchLayoutConfig& m) {
+    uint8_t bit_map[switch_matrix::NUM_CELLS] = {0};
+    for (uint8_t c = 0; c < switch_matrix::NUM_COLS; ++c) {
+        for (uint8_t r = 0; r < switch_matrix::NUM_ROWS; ++r) {
+            uint8_t phys_i = switch_matrix::bit_index_for(c, r);
+            uint8_t bit_i = (uint8_t)(m.row_a[r] + switch_matrix::NUM_ROWS * m.col_b[c]);
+            bit_map[phys_i] = bit_i;
+        }
+    }
+    if (!g_matrix.set_bit_map(bit_map)) {
+        g_matrix.reset_bit_map_identity();
+        pxlog::warn("main", "switch layout bit map invalid; identity fallback");
+    }
+
+    if (!code_engine::set_digit_order(m.digit_order)) {
+        code_engine::reset_digit_order();
+        pxlog::warn("main", "switch layout digit_order invalid; identity fallback");
+    }
+}
+
+} // namespace
+
 static void matrix_tick() {
     // Pace ticks by the configured poll interval. SwitchMatrix itself does
     // not call millis() so it stays host-testable; the spacing is enforced
@@ -92,6 +196,13 @@ void setup() {
         pxlog::warn("main", "config_invalid: using built-in defaults");
         mqtt_mgr::note_config_invalid_pending();
     }
+
+    SwitchLayoutConfig sw_layout;
+    load_switch_layout_defaults(sw_layout);
+    if (!load_switch_layout_file(sw_layout)) {
+        pxlog::warn("main", "switch layout using defaults");
+    }
+    apply_switch_layout(sw_layout);
 
     // ---- Boot order per spec §8.3: display + matrix BEFORE WiFi/MQTT ----
     // This ensures the first lit code appears within 1.5 s of power-on.

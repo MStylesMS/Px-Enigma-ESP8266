@@ -28,4 +28,7 @@ bool mqtt_connected();
 // Code engine reports its live state here so build_state() stays DRY.
 void set_code_state(const code_engine::CodeState* cs);
 
+// Read the latest code snapshot if available.
+bool get_code_snapshot(uint32_t* code_bits, const char** code_str);
+
 } // namespace appstate

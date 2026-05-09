@@ -8,7 +8,11 @@
 </head>
 <body>
   <header>
-    <h1 id="title">px-enigma</h1>
+    <div class="header-inner">
+      <img id="paradox-logo" src="/logo.png" alt="Paradox"
+           onerror="this.style.display='none'" />
+      <h1 id="title">px-enigma</h1>
+    </div>
     <div id="banner" class="hidden"></div>
   </header>
 
@@ -24,7 +28,6 @@
       </div>
       <div class="stat-grid" id="stat-grid">
         <span class="stat-lbl">Status</span>      <span id="s-status">—</span>
-        <span class="stat-lbl">Code</span>        <span id="s-code">—</span>
         <span class="stat-lbl">Solved</span>      <span id="s-solved">—</span>
         <span class="stat-lbl">WiFi STA</span>    <span id="s-sta">—</span>
         <span class="stat-lbl">RSSI</span>        <span id="s-rssi">—</span>
@@ -34,6 +37,18 @@
         <span class="stat-lbl">Free heap</span>  <span id="s-heap">—</span>
         <span class="stat-lbl">Uptime</span>      <span id="s-uptime">—</span>
       </div>
+    </section>
+
+    <!-- Switch grid (live) -->
+    <section id="switch-grid-section">
+      <span id="switch-mode">Mode: —</span>
+      <h2>Switches</h2>
+      <div class="switch-code switch-code-target" id="switch-target-code">Target: —</div>
+      <div id="switch-grid-wrap">
+        <div id="switch-grid"></div>
+      </div>
+      <div class="switch-code switch-code-current" id="switch-current-code">Current: —</div>
+      <p class="hint">Upload switch_layout.json via curl to edit layout.</p>
     </section>
 
     <!-- Config form -->

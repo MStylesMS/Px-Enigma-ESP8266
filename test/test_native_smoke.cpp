@@ -369,6 +369,35 @@ void test_matrix_debounce_clamps_to_one() {
     TEST_ASSERT_EQUAL_UINT32(1u, sm.state());
 }
 
+void test_matrix_custom_bit_map_applies() {
+    FakeScanIO io;
+    switch_matrix::SwitchMatrix sm;
+    sm.begin(io, 1);
+
+    // Build the requested mapping:
+    // A(row): [3,2,0,4,1], B(col): [3,2,0,1]
+    const uint8_t row_a[switch_matrix::NUM_ROWS] = {3, 2, 0, 4, 1};
+    const uint8_t col_b[switch_matrix::NUM_COLS] = {3, 2, 0, 1};
+    uint8_t bit_map[switch_matrix::NUM_CELLS] = {0};
+    for (uint8_t c = 0; c < switch_matrix::NUM_COLS; ++c) {
+        for (uint8_t r = 0; r < switch_matrix::NUM_ROWS; ++r) {
+            uint8_t phys = switch_matrix::bit_index_for(c, r);
+            bit_map[phys] = (uint8_t)(row_a[r] + switch_matrix::NUM_ROWS * col_b[c]);
+        }
+    }
+    TEST_ASSERT_TRUE(sm.set_bit_map(bit_map));
+
+    // Close physical (col=2,row=2) [1-based (3,3)] => A=0,B=0 => bit 0 => value 1.
+    io.set_row(/*col=*/2, /*row=*/2, true);
+    sweep(sm);
+    TEST_ASSERT_EQUAL_UINT32(1u, sm.state());
+
+    // Also close physical (col=3,row=2) [1-based (4,3)] => A=0,B=1 => bit 5 => +32.
+    io.set_row(/*col=*/3, /*row=*/2, true);
+    sweep(sm);
+    TEST_ASSERT_EQUAL_UINT32(33u, sm.state());
+}
+
 // ---------------------------------------------------------------------------
 
 // ============================================================================
@@ -451,6 +480,19 @@ void test_engine_format_code_wraps_at_1M() {
     char buf[9];
     code_engine::format_code(1000001, buf);  // 1,000,001 mod 1M = 1
     TEST_ASSERT_EQUAL_STRING("00-00-01", buf);
+}
+
+void test_engine_format_code_custom_digit_order() {
+    char buf[9];
+    const uint8_t ord[6] = {4, 2, 6, 1, 5, 3};
+    TEST_ASSERT_TRUE(code_engine::set_digit_order(ord));
+
+    code_engine::format_code(123456, buf);
+    TEST_ASSERT_EQUAL_STRING("42-61-53", buf);
+    code_engine::format_code(8192, buf);  // 008192
+    TEST_ASSERT_EQUAL_STRING("10-20-98", buf);
+
+    code_engine::reset_digit_order();
 }
 
 // ---- target parser ----
@@ -751,14 +793,14 @@ void test_engine_set_target_latching_no_match_no_solve() {
 //
 // The digit-position layout contract being tested:
 //   For code "XX-YY-ZZ" (XX = code/10000, YY = (code/100)%100, ZZ = code%100):
-//     display_low [0]  = XX / 10
+//     display_high[0]  = XX / 10   (leftmost)
 //     display_high[1]  = XX % 10
 //     display_high[3]  = dash
-//     display_low [4]  = YY / 10
-//     display_high[0]  = YY % 10
+//     display_high[4]  = YY / 10
+//     display_low [0]  = YY % 10
 //     display_low [1]  = dash
 //     display_low [3]  = ZZ / 10
-//     display_high[4]  = ZZ % 10
+//     display_low [4]  = ZZ % 10   (rightmost)
 // ---------------------------------------------------------------------------
 
 // Helper: parse "XX-YY-ZZ" string → xx, yy, zz integers.
@@ -781,12 +823,12 @@ void test_display_digit_position_parse() {
 
 void test_display_digit_position_xx_yy_zz_parts() {
     // Pin the digit decomposition used by render_code() for "12-34-56":
-    //   display_low[0]  = xx / 10 = 1
+    //   display_high[0] = xx / 10 = 1
     //   display_high[1] = xx % 10 = 2
-    //   display_low[4]  = yy / 10 = 3
-    //   display_high[0] = yy % 10 = 4
+    //   display_high[4] = yy / 10 = 3
+    //   display_low[0]  = yy % 10 = 4
     //   display_low[3]  = zz / 10 = 5
-    //   display_high[4] = zz % 10 = 6
+    //   display_low[4]  = zz % 10 = 6
     char buf[9];
     code_engine::format_code(123456, buf);
     int xx, yy, zz;
@@ -1181,12 +1223,14 @@ int main() {
     RUN_TEST(test_matrix_independent_cells);
     RUN_TEST(test_matrix_force_state_masks_to_20_bits);
     RUN_TEST(test_matrix_debounce_clamps_to_one);
+    RUN_TEST(test_matrix_custom_bit_map_applies);
     // Phase 7 — code engine
     RUN_TEST(test_engine_format_code_basic);
     RUN_TEST(test_engine_format_code_leading_zeros);
     RUN_TEST(test_engine_format_code_zero);
     RUN_TEST(test_engine_format_code_max);
     RUN_TEST(test_engine_format_code_wraps_at_1M);
+    RUN_TEST(test_engine_format_code_custom_digit_order);
     RUN_TEST(test_engine_parse_target_integer_string);
     RUN_TEST(test_engine_parse_target_hyphenated);
     RUN_TEST(test_engine_parse_target_short_left_padded);
