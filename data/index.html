@@ -28,7 +28,6 @@
       </div>
       <div class="stat-grid" id="stat-grid">
         <span class="stat-lbl">Status</span>      <span id="s-status">—</span>
-        <span class="stat-lbl">Code</span>        <span id="s-code">—</span>
         <span class="stat-lbl">Solved</span>      <span id="s-solved">—</span>
         <span class="stat-lbl">WiFi STA</span>    <span id="s-sta">—</span>
         <span class="stat-lbl">RSSI</span>        <span id="s-rssi">—</span>
@@ -42,11 +41,14 @@
 
     <!-- Switch grid (live) -->
     <section id="switch-grid-section">
+      <span id="switch-mode">Mode: —</span>
       <h2>Switches</h2>
+      <div class="switch-code switch-code-target" id="switch-target-code">Target: —</div>
       <div id="switch-grid-wrap">
         <div id="switch-grid"></div>
       </div>
-      <p class="hint">Layout &amp; orientation: edit <code>switch_layout.json</code> and re-flash filesystem.</p>
+      <div class="switch-code switch-code-current" id="switch-current-code">Current: —</div>
+      <p class="hint">Upload switch_layout.json via curl to edit layout.</p>
     </section>
 
     <!-- Config form -->
