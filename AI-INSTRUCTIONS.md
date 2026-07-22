@@ -1,4 +1,4 @@
-﻿This is the canonical AI/agent context for this repository. `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` are thin pointers to this file.
+This is the canonical AI/agent context for this repository. `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` are thin pointers to this file.
 
 # px-enigma-esp8266 â€” AI Instructions
 
@@ -158,3 +158,7 @@ for this; firmware must not reconfigure them in conflicting ways during boot.
 | [docs/implementation-plan.md](docs/implementation-plan.md) | Ordered, testable phases |
 | [docs/user-guide.md](docs/user-guide.md) | Operator-facing setup and usage |
 | [README.md](README.md) | Project overview and quick start |
+
+## Suite standards
+
+Suite-wide contracts live in [../../../apps/PxH/docs/standards/](../../../apps/PxH/docs/standards/) (folder, not a single file). Read those before changing MQTT topics or shared conventions. If you change a standard, update the file under PxH `docs/standards/` first and propagate to other repos' docs in the same work.
