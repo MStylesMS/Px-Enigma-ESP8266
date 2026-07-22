@@ -55,9 +55,11 @@ renderer reads from `code_engine`; it never owns puzzle state.
   cold boot under ~1.5 s. Players will normally power-cycle the prop at the
   start of each game.
 - **MQTT topic structure is fixed:** `<base_topic>/{commands,state,events,warnings,config}`,
-  plus a separate `<announce_topic>` (default `paradox/props`) that is **not**
-  derived from `base_topic`. `<base_topic>/config` is **retained** and applied
-  silently on every (re)connect.
+  plus a separate `<announce_topic>` (default `paradox/props`; third-party may use
+  `<company>/props`) that is **not** derived from `base_topic`. Announce is published
+  **once** per MQTT connect/reconnect. Periodic state/heartbeat is `{base_topic}/state`
+  (prefer `paradox/<room>/<device>/state`) — never on the announce topic.
+  `<base_topic>/config` is **retained** and applied silently on every (re)connect.
 - **Command envelope:** `{ "command": "lowerCamel", "request_id"?: "...", ...params }`.
   `request_id` is echoed verbatim in the corresponding `command_*` outcome event.
 - **Outcome events:** every command emits `command_received`, then exactly one of
