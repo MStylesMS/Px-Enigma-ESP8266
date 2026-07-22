@@ -80,7 +80,7 @@ function readForm() {
 
 async function loadConfig() {
   try {
-    const r = await fetch('/api/config');
+    const r = await fetch('api/config');
     if (!r.ok) throw new Error('config ' + r.status);
     const cfg = await r.json();
     fillForm(cfg);
@@ -99,7 +99,7 @@ async function saveConfig(ev) {
   status.textContent = 'saving…';
   try {
     const body = JSON.stringify(readForm());
-    const r = await fetch('/api/config', {
+    const r = await fetch('api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body
@@ -194,7 +194,7 @@ function formatCodeForUi(codeStr) {
 
 async function loadSwitchLayout() {
   try {
-    const r = await fetch('/switch_layout.json');
+    const r = await fetch('switch_layout.json');
     if (r.ok) Object.assign(g_sw_layout, await r.json());
   } catch (e) { /* use defaults */ }
   initSwitchGrid();
@@ -331,7 +331,7 @@ function applyState(s) {
 // ---- state ----
 async function loadState() {
   try {
-    const r = await fetch('/api/state');
+    const r = await fetch('api/state');
     if (!r.ok) {
       $('#state-raw').textContent = 'state ' + r.status;
       return;
@@ -345,7 +345,7 @@ async function loadState() {
 // ---- log ----
 async function loadLog() {
   try {
-    const r = await fetch('/api/log');
+    const r = await fetch('api/log');
     if (!r.ok) { $('#log-out').textContent = 'log ' + r.status; return; }
     const lines = await r.json();
     $('#log-out').textContent = Array.isArray(lines) ? lines.join('\n') : JSON.stringify(lines);
@@ -360,7 +360,7 @@ function connectEvents() {
   if (!window.EventSource) return;
   if (g_evt) g_evt.close();
 
-  const es = new EventSource('/api/events');
+  const es = new EventSource('api/events');
   g_evt = es;
   es.addEventListener('state', (ev) => {
     try { applyState(JSON.parse(ev.data)); } catch (_) {}
@@ -392,25 +392,25 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#refresh-log').addEventListener('click', loadLog);
 
   $('#identify').addEventListener('click', async () => {
-    const j = await post('/api/identify');
+    const j = await post('api/identify');
     showBanner(j.ok ? 'Identify triggered' : ('identify: ' + (j.error || 'error')));
   });
 
   $('#restart').addEventListener('click', async () => {
     if (!confirm('Restart the device?')) return;
-    await post('/api/restart');
+    await post('api/restart');
     showBanner('Restarting…');
     setTimeout(() => window.location.reload(), 6000);
   });
 
   $('#reset-puzzle').addEventListener('click', async () => {
-    const j = await post('/api/reset');
+    const j = await post('api/reset');
     showBanner(j.ok ? 'Puzzle reset' : ('reset: ' + (j.error || 'error')));
   });
 
   $('#factory-reset').addEventListener('click', async () => {
     if (!confirm('Factory reset will wipe config and reboot. Continue?')) return;
-    await post('/api/config/reset');
+    await post('api/config/reset');
     showBanner('Factory reset — rebooting…');
     setTimeout(() => window.location.reload(), 7000);
   });

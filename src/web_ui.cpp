@@ -16,6 +16,7 @@
 // Secrets redaction: wifi passwords and mqtt password are replaced with ""
 // in GET /api/config unless the query string contains `reveal=1`.
 #include "web_ui.h"
+#include "http_proxy.h"
 #include "log.h"
 #include "wifi_mgr.h"
 #include "ota_mgr.h"
@@ -287,6 +288,33 @@ static void stream_file(const char* path, const char* mime) {
     f.close();
 }
 
+static void stream_html(const char* path) {
+    http_proxy::Ctx ctx;
+    http_proxy::read(s_server, ctx);
+
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        char msg[80];
+        snprintf(msg, sizeof(msg), "%s not found — run: pio run -t uploadfs", path);
+        s_server.send(404, "text/plain", msg);
+        return;
+    }
+
+    if (!ctx.has_prefix) {
+        s_server.streamFile(f, "text/html");
+        f.close();
+        return;
+    }
+
+    String html = f.readString();
+    f.close();
+    if (!http_proxy::inject_base_tag(html, ctx)) {
+        s_server.send(500, "text/plain", "HTML rewrite failed");
+        return;
+    }
+    s_server.send(200, "text/html", html);
+}
+
 // ---------------------------------------------------------------------------
 // Secrets redaction
 // ---------------------------------------------------------------------------
@@ -318,7 +346,7 @@ static void redact_config(JsonDocument& doc) {
 
 static void handle_root() {
     if (!heap_ok()) { send_err(503, "low heap"); return; }
-    stream_file("/index.html", "text/html");
+    stream_html("/index.html");
 }
 
 static void handle_static_css() {
