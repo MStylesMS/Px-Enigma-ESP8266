@@ -143,9 +143,10 @@ for this; firmware must not reconfigure them in conflicting ways during boot.
 - **Branching:** `main` is the integration branch. Topic branches are short-lived.
 - **Edits are minimal.** Don't reformat unrelated code, don't add commentary
   unrelated to the change, don't widen scope without asking.
-- **Prop admin reverse proxy:** HTTP UI honours `X-Forwarded-Prefix` (injects
-  `<base href>` into HTML via `src/http_proxy.*`). Static UI uses path-relative
-  URLs. See PxD `docs/PROP_ADMIN_REVERSE_PROXY.md`.
+- **Prop admin reverse proxy:** HTTP UI honours `X-Forwarded-Prefix` / Host /
+  Proto via `src/http_proxy.*` (injects `<base href>`, `join_path`, `build_url`,
+  `build_ws_url`). Static UI uses path-relative URLs. See PxD
+  `docs/PROP_ADMIN_REVERSE_PROXY.md`.
 
 ## Key references
 
