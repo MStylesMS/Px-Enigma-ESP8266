@@ -33,6 +33,14 @@ namespace web_ui {
 static const char* TAG = "web";
 
 static ESP8266WebServer s_server(80);
+
+// ESP8266WebServer drops unknown headers unless registered up front.
+static const char* k_proxy_headers[] = {
+    "X-Forwarded-Prefix",
+    "X-Forwarded-Host",
+    "X-Forwarded-Proto",
+};
+
 static cfg::Config*     s_cfg           = nullptr;
 static bool             s_reboot_pending = false;
 static uint32_t         s_reboot_at     = 0;
@@ -540,6 +548,8 @@ void begin(cfg::Config* c) {
     // Mount HTTP OTA updater on the shared server (must precede begin()).
     ota_mgr::mount_http_update(s_server, *s_cfg);
 
+    s_server.collectHeaders(k_proxy_headers,
+                            sizeof(k_proxy_headers) / sizeof(k_proxy_headers[0]));
     s_server.begin();
     pxlog::info(TAG, "HTTP server up on :80");
 }
