@@ -22,6 +22,29 @@ cd /opt/repos/esp8266/px-enigma-esp8266
   --json-out logs/enigma-soak-30m.json
 ```
 
+### 12 V-only power test (USB unplugged)
+
+Serial monitoring is unavailable when USB is unplugged, so use Wi-Fi instead.
+
+**Windows:** `tools/power-soak/Run-PowerSoak.ps1`
+
+1. Prop powered from 12 V, USB still connected.
+2. Confirm reachability: `curl http://192.168.1.100/api/state` (STA) or
+   join the device AP and use `http://192.168.4.1/api/state`.
+3. Start the monitor, then unplug USB:
+
+```powershell
+cd props\esp8266\Px-Enigma-ESP8266
+.\tools\power-soak\Run-PowerSoak.ps1 -DeviceHost 192.168.1.100 -PollSeconds 5
+# Unplug USB now — prop must run from 12 V only
+```
+
+4. Watch for `REBOOT` lines (uptime dropped) or repeated `FETCH FAIL`.
+   Either indicates brownout/reset looping on the 12 V rail.
+
+Prefer monitoring via the device AP (`192.168.4.1`) if STA reconnect is
+also failing during resets.
+
 ## 2) Code to matrix
 
 Script: `tools/code-to-matrix.sh`
