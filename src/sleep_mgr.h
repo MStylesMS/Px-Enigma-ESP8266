@@ -5,7 +5,9 @@
 // switch-state change; when the inactivity timer elapses it:
 //   1. Publishes `going_to_sleep` to MQTT.
 //   2. Flushes the log ring buffer.
-//   3. Calls ESP.deepSleep(0) — wake requires a power cycle.
+//   3. Blanks the display except for the two code-separator dashes (sleep
+//      indicator).
+//   4. Calls ESP.deepSleep(0) — wake requires a power cycle.
 //
 // `inactivity_minutes == 0` disables the timer entirely, even on battery
 // profiles.
@@ -32,8 +34,8 @@ uint32_t idle_minutes();
 // True if the sleep manager is enabled for the current profile.
 bool enabled();
 
-// Operator-triggered deep sleep (MQTT `sleep` command). Always enters deep
-// sleep regardless of profile; wake requires a power cycle.
-void enter_sleep_now();
+// Operator-triggered or deferred deep sleep. Display sleep indicator must
+// already be shown (via display_mgr::show_sleep_indicator()).
+void enter_deep_sleep();
 
 } // namespace sleep_mgr

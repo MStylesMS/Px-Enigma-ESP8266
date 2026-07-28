@@ -52,6 +52,7 @@ static bool     s_last_mqtt_conn  = false;
 static int      s_last_rssi       = 1;     // 1 = "not yet set"
 static bool     s_last_low_batt   = false;
 static bool     s_last_crit_batt  = false;
+static bool     s_sleep_indicator = false;
 
 // LOW_BATT banner: show "LOW " on display_lo for ~3 s then resume code.
 static uint32_t s_low_banner_until_ms = 0;
@@ -195,6 +196,19 @@ static void render_blank() {
     if (s_hi_ok) blank_display(s_hi);
 }
 
+// Sleep indicator: all segments and decimal points off; only the two code
+// separator dashes lit (display_high pos 3 and display_low pos 1 — the
+// middle of the XX-YY-ZZ field). Power remains applied so the dashes show
+// the prop is alive but the MCU is in deep sleep.
+static void render_sleep_indicator() {
+    if (s_lo_ok) {
+        write_raw(s_lo, SEG_BLANK, SEG_DASH, SEG_BLANK, SEG_BLANK);
+    }
+    if (s_hi_ok) {
+        write_raw(s_hi, SEG_BLANK, SEG_BLANK, SEG_DASH, SEG_BLANK);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Signal indicator dp_bits calculation
 // ---------------------------------------------------------------------------
@@ -266,11 +280,19 @@ void set_brightness(uint8_t b) {
     if (s_lo_ok) s_lo.setBrightness(b);
 }
 
+void show_sleep_indicator() {
+    render_sleep_indicator();
+    s_sleep_indicator = true;
+    pxlog::info(TAG, "sleep indicator: code dashes on, all other segments off");
+}
+
 void tick(const char* code_str, bool latched, bool identify,
           bool is_off, bool mqtt_connected, int rssi_dbm,
           bool si_enabled,
           const int8_t rssi_thresholds[cfg::RSSI_THRESHOLDS],
           bool low_batt, bool crit_batt) {
+
+    if (s_sleep_indicator) return;
 
     uint32_t now = millis();
 

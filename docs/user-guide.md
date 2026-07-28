@@ -320,8 +320,9 @@ shown read-only in the Web UI's diagnostics panel. To recalibrate, edit
 
 When any battery profile is selected, the firmware runs an inactivity
 timer. If no switch changes are detected for `inactivity_minutes`
-(default **60**), the prop publishes a `going_to_sleep` event and
-enters deep sleep.
+(default **60**), the prop publishes a `going_to_sleep` event, shows
+the sleep indicator on the display (two middle code dashes only — all other
+segments off), and enters deep sleep.
 
 **Wake from deep sleep requires a power cycle.** This matches the
 prop's normal lifecycle (powered on for the duration of a game, off
@@ -329,6 +330,10 @@ between games) and prevents unattended battery drain.
 
 Set `inactivity_minutes` to `0` in the Web UI to disable auto-sleep on
 battery.
+
+The **`sleep` MQTT command** (and the inactivity timer) use the same
+display pattern: only the two middle code dashes stay lit so operators
+can see that power is applied but the prop is not active.
 
 ### Optional WiFi / MQTT signal indicator
 

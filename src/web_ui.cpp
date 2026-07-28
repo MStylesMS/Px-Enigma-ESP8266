@@ -11,6 +11,7 @@
 //   POST /api/identify      — placeholder (display not yet initialised)
 //   POST /api/reset         — puzzle reset (clears latch, no reboot)
 //   POST /api/restart       — reboot device
+//   POST /api/sleep         — deep sleep (sleep indicator, wake = power cycle)
 //   POST /update            — HTTP OTA (Phase 4); returns 501 until then
 //
 // Secrets redaction: wifi passwords and mqtt password are replaced with ""
@@ -501,6 +502,12 @@ static void handle_post_restart() {
     pxlog::info(TAG, "restart requested via HTTP");
 }
 
+static void handle_post_sleep() {
+    send_ok();
+    commands::schedule_sleep(500);
+    pxlog::info(TAG, "sleep requested via HTTP");
+}
+
 // Serve any file that exists in LittleFS but has no explicit route registered
 // (e.g. /logo.svg, /switch_layout.json, future static assets).
 static const char* mime_for(const String& path) {
@@ -543,6 +550,7 @@ void begin(cfg::Config* c) {
     s_server.on("/api/identify",      HTTP_POST, handle_post_identify);
     s_server.on("/api/reset",         HTTP_POST, handle_post_reset);
     s_server.on("/api/restart",       HTTP_POST, handle_post_restart);
+    s_server.on("/api/sleep",         HTTP_POST, handle_post_sleep);
     s_server.onNotFound(handle_not_found);
 
     // Mount HTTP OTA updater on the shared server (must precede begin()).

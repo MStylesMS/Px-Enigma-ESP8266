@@ -3,6 +3,7 @@
 // Phase 9c.
 #include "sleep_mgr.h"
 #include "battery_monitor.h"
+#include "display_mgr.h"
 #include "mqtt_mgr.h"
 #include "log.h"
 
@@ -56,6 +57,8 @@ void loop(bool switch_changed) {
                                 doc.as<JsonVariantConst>());
 
         pxlog::flush();
+        display_mgr::show_sleep_indicator();
+        delay(150);
 
         ESP.deepSleep(0);
         // deepSleep does not return; hardware resets after wake.
@@ -70,9 +73,9 @@ uint32_t idle_minutes() {
 
 bool enabled() { return s_enabled; }
 
-void enter_sleep_now() {
+void enter_deep_sleep() {
     uint32_t idle_min = s_enabled ? idle_minutes() : 0;
-    pxlog::info(TAG, "sleep command — entering deep sleep (idle %u min)", idle_min);
+    pxlog::info(TAG, "entering deep sleep (idle %u min)", idle_min);
 
     StaticJsonDocument<96> doc;
     doc["idle_minutes"] = idle_min;
@@ -82,6 +85,7 @@ void enter_sleep_now() {
                             doc.as<JsonVariantConst>());
 
     pxlog::flush();
+    delay(50);
     ESP.deepSleep(0);
 }
 

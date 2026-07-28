@@ -25,6 +25,8 @@ static bool     s_identify_active = false;
 static uint32_t s_identify_until  = 0;
 static bool     s_restart_pending = false;
 static uint32_t s_restart_at      = 0;
+static bool     s_sleep_pending   = false;
+static uint32_t s_sleep_at        = 0;
 static bool     s_off             = false;
 
 // ---------------------------------------------------------------------------
@@ -108,6 +110,13 @@ void schedule_restart(uint32_t delay_ms) {
     pxlog::warn(TAG, "restart scheduled in %u ms", (unsigned)delay_ms);
 }
 
+void schedule_sleep(uint32_t delay_ms) {
+    display_mgr::show_sleep_indicator();
+    s_sleep_pending = true;
+    s_sleep_at = millis() + delay_ms;
+    pxlog::warn(TAG, "sleep scheduled in %u ms", (unsigned)delay_ms);
+}
+
 bool is_off() { return s_off; }
 
 void tick() {
@@ -118,6 +127,10 @@ void tick() {
     if (s_restart_pending && (int32_t)(now - s_restart_at) >= 0) {
         pxlog::warn(TAG, "restarting now");
         ESP.restart();
+    }
+    if (s_sleep_pending && (int32_t)(now - s_sleep_at) >= 0) {
+        s_sleep_pending = false;
+        sleep_mgr::enter_deep_sleep();
     }
 }
 
@@ -393,8 +406,7 @@ void handle_command_payload(const uint8_t* payload, size_t len) {
     if (!strcmp(cmd, "sleep")) {
         publish_outcome("command_success", cmd, req, "going_to_sleep",
                         JsonVariantConst());
-        mqtt_mgr::publish_state();
-        sleep_mgr::enter_sleep_now();
+        schedule_sleep(300);
         return;
     }
 

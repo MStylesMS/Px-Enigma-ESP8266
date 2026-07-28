@@ -405,11 +405,17 @@ document.addEventListener('DOMContentLoaded', () => {
     showBanner(j.ok ? 'Identify triggered' : ('identify: ' + (j.error || 'error')));
   });
 
-  $('#restart').addEventListener('click', async () => {
-    if (!confirm('Restart the device?')) return;
+  $('#reboot').addEventListener('click', async () => {
+    if (!confirm('Reboot the device?')) return;
     await post('api/restart');
-    showBanner('Restarting…');
+    showBanner('Rebooting…');
     setTimeout(() => window.location.reload(), 6000);
+  });
+
+  $('#sleep').addEventListener('click', async () => {
+    if (!confirm('Send the prop to deep sleep? Wake requires a power cycle.')) return;
+    await post('api/sleep');
+    showBanner('Sleeping — only the two middle dashes should remain lit.');
   });
 
   $('#reset-puzzle').addEventListener('click', async () => {

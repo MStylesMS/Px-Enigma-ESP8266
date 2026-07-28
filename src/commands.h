@@ -37,6 +37,10 @@ void reset_puzzle();
 // outcome events before the device reboots.
 void schedule_restart(uint32_t delay_ms = 500);
 
+// Schedule deep sleep: show the sleep indicator immediately, then enter
+// deep sleep after `delay_ms` so HTTP/MQTT responses can flush first.
+void schedule_sleep(uint32_t delay_ms = 300);
+
 // True iff the device is in the OFF state (set by the `off` command;
 // cleared by `on`). Phase 8: just a flag — the display FSM (Phase 9)
 // will honour it.

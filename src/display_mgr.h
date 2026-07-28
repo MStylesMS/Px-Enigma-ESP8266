@@ -45,6 +45,11 @@ void tick(const char* code_str, bool latched, bool identify,
 // Update brightness immediately (called from setBrightness command).
 void set_brightness(uint8_t b);
 
+// Sleep indicator: blank all segments except the two XX-YY-ZZ separator
+// dashes (display_high pos 3, display_low pos 1). Called by sleep_mgr and
+// commands::schedule_sleep immediately before deep sleep.
+void show_sleep_indicator();
+
 // Boot-strap GPIO sanity check. Logs a warning if GPIO0, GPIO2, or GPIO15
 // is in an unexpected logic state at end of setup(). Returns true = all OK.
 bool sanity_check_boot_pins();

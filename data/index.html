@@ -23,7 +23,6 @@
       <div class="btn-row">
         <button type="button" id="refresh">Refresh</button>
         <button type="button" id="identify">Identify</button>
-        <button type="button" id="restart">Restart</button>
         <button type="button" id="reset-puzzle" class="warn-btn">Reset puzzle</button>
       </div>
       <div class="stat-grid" id="stat-grid">
@@ -126,17 +125,19 @@
         <label>Hysteresis (%)        <input name="battery.hysteresis_pct" type="number" min="0" max="50"  /></label>
       </fieldset>
 
+      <div class="btn-row">
+        <button type="submit">Save</button>
+        <button type="button" id="sleep" class="warn-btn">Sleep</button>
+        <button type="button" id="reboot">Reboot</button>
+        <span id="save-status"></span>
+      </div>
+
       <fieldset>
         <legend>OTA</legend>
         <p>ArduinoOTA and HTTP OTA are enabled automatically.</p>
         <p>Hostname: derived from <em>device name</em>. Password: AP password.</p>
         <p><a href="update">Upload firmware (web)</a></p>
       </fieldset>
-
-      <div class="btn-row">
-        <button type="submit">Save</button>
-        <span id="save-status"></span>
-      </div>
     </form>
 
     <!-- Diagnostics / read-only -->

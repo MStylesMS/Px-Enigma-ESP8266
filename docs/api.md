@@ -185,6 +185,14 @@ Schedules a device reboot (~500 ms delay). Returns `{ "ok": true }` before reboo
 curl -X POST http://<host>/api/restart
 ```
 
+#### `POST /api/sleep`
+
+Shows the sleep indicator (two middle code dashes only), then enters deep sleep after a short delay. Returns `{ "ok": true }` before sleeping. Wake requires a power cycle.
+
+```bash
+curl -X POST http://<host>/api/sleep
+```
+
 ### 2.6 Log
 
 #### `GET /api/log`
@@ -404,7 +412,7 @@ mosquitto_pub -h <broker> -t paradox/enigma1/commands \
 
 ---
 
-**`sleep`** — Enter deep sleep immediately (operator override). Publishes `command_success` with warning `going_to_sleep`, then a `going_to_sleep` system event, then calls `ESP.deepSleep(0)`. Wake requires a power cycle.
+**`sleep`** — Enter deep sleep immediately (operator override). Publishes `command_success` with warning `going_to_sleep`, shows the sleep indicator (two middle code dashes only), then a `going_to_sleep` system event, then calls `ESP.deepSleep(0)`. Wake requires a power cycle.
 
 ```bash
 mosquitto_pub -h <broker> -t paradox/enigma1/commands \

@@ -81,7 +81,7 @@ Display / engine states (network is independent and always active):
 | `IDENTIFY`   | Brief identification flash (commanded externally)      | `8888 8888` for ~ 2 s                |
 | `LOW_BATT`   | Battery percent below `low_percent`; banner overlay    | `XX-YY-ZZ` with periodic "LOW" banner |
 | `CRIT_BATT`  | Battery percent at cutoff; matrix scan halted          | "CRIT" banner; no code updates       |
-| `SLEEPING`   | Inactivity timeout reached on battery; deep sleep      | (powered down)                       |
+| `SLEEPING`   | Inactivity timeout or `sleep` command; deep sleep      | Two code dashes only (`--` in `XX-YY-ZZ` positions) |
 
 Transitions:
 
@@ -403,7 +403,9 @@ When the configured profile is anything other than `external` or
 - When the timer elapses the firmware:
   1. Publishes a `going_to_sleep` event with the elapsed-idle minutes.
   2. Flushes the log ring buffer.
-  3. Calls `ESP.deepSleep(0)` so the device sleeps until reset.
+  3. Blanks both displays except for the two code-separator dashes (sleep
+     indicator — see §8.2).
+  4. Calls `ESP.deepSleep(0)` so the device sleeps until reset.
 
 A power cycle (or external reset) is required to wake. This is
 intentional: the prop's normal lifecycle is "powered on for the
@@ -444,6 +446,12 @@ need to register without a wake-from-sleep latency.
   resumes the live code with no further interruptions until the state
   changes.
 - `CRIT_BATT` shows "CRIT" continuously until the rail recovers.
+- **Sleep indicator:** before entering deep sleep (inactivity timeout or
+  the `sleep` command), all segments and decimal points are turned off.
+  Only the two code-separator dashes remain lit — `display_high` position 3
+  and `display_low` position 1 (the middle of the `XX-YY-ZZ` field). This
+  shows that supply power is still present while the ESP8266 is asleep. The
+  pattern persists until a power cycle wakes the device.
 
 ### 8.3 Boot priority
 
