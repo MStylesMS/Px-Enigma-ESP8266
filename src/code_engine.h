@@ -32,6 +32,10 @@ bool set_digit_order(const uint8_t order[6]);
 // Restore identity order [1,2,3,4,5,6].
 void reset_digit_order();
 
+// Matrix bit pattern whose ordered display code equals `target_int`.
+// Inverse of ordered_code_int(bits % 1_000_000); used for target_grid in state.
+uint32_t target_matrix_bits(uint32_t target_int);
+
 // Parse a target string per functional-spec §5.4.
 //   Accepts: integer-as-string ("123456"), hyphenated ("12-34-56"), bare int.
 //   Returns the parsed 0..999999 value in *out.

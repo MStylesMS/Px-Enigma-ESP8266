@@ -32,4 +32,8 @@ uint32_t idle_minutes();
 // True if the sleep manager is enabled for the current profile.
 bool enabled();
 
+// Operator-triggered deep sleep (MQTT `sleep` command). Always enters deep
+// sleep regardless of profile; wake requires a power cycle.
+void enter_sleep_now();
+
 } // namespace sleep_mgr

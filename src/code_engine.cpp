@@ -36,6 +36,16 @@ static uint32_t ordered_code_int(uint32_t code_int) {
     return (uint32_t)strtoul(d, nullptr, 10);
 }
 
+uint32_t target_matrix_bits(uint32_t target_int) {
+    char tgt[7];
+    snprintf(tgt, sizeof(tgt), "%06u", (unsigned)(target_int % 1000000u));
+
+    char raw[7];
+    for (uint8_t i = 0; i < 6; ++i) raw[s_digit_order[i] - 1] = tgt[i];
+    raw[6] = '\0';
+    return (uint32_t)strtoul(raw, nullptr, 10);
+}
+
 static void format_plain_code(uint32_t code_int, char* dst) {
     uint32_t v = code_int % 1000000u;
     uint32_t hi = v / 10000u;

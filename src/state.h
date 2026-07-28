@@ -22,7 +22,9 @@ void build_state(const cfg::Config& c, JsonDocument& out);
 void build_announce(const cfg::Config& c, JsonDocument& out);
 
 // Add the physical switch-layout representation for a raw matrix state.
-void add_code_grid(JsonObject code_obj, uint32_t code_bits);
+// `array_key` defaults to "grid"; pass "target_grid" for the target bitmask.
+void add_code_grid(JsonObject code_obj, uint32_t code_bits,
+                   const char* array_key = "grid");
 
 // Reset the rolling minimum-free-heap watermark.
 void reset_heap_watermark();

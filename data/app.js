@@ -258,15 +258,24 @@ function initSwitchGrid() {
   }
 }
 
-function updateSwitchGrid(code_bits, target_bits) {
-  document.querySelectorAll('#switch-grid .sw-cell:not(.sw-inactive)').forEach(cell => {
-    const bit = parseInt(cell.dataset.bit);
-    const on = code_bits != null ? ((code_bits >>> bit) & 1) : 0;
-    const targetOn = target_bits != null
-      ? ((target_bits >>> bit) & 1)
-      : 0;
-    cell.classList.toggle('sw-on', !!on);
-    cell.classList.toggle('sw-target', !!targetOn);
+function updateSwitchGrid(codeGrid, targetGrid) {
+  const rows = Array.isArray(codeGrid) ? codeGrid : [];
+  const tgtRows = Array.isArray(targetGrid) ? targetGrid : null;
+  const uiCols = Number.isInteger(g_sw_layout.ui_cols) ? g_sw_layout.ui_cols : g_sw_layout.cols;
+  const cells = document.querySelectorAll('#switch-grid .sw-cell');
+  cells.forEach((cell, idx) => {
+    if (cell.classList.contains('sw-inactive')) {
+      cell.classList.remove('sw-on', 'sw-target');
+      return;
+    }
+    const r = Math.floor(idx / uiCols);
+    const c = idx % uiCols;
+    const row = rows[r] || '';
+    const tgtRow = tgtRows ? (tgtRows[r] || '') : '';
+    const ch = row[c];
+    const tgtCh = tgtRow[c];
+    cell.classList.toggle('sw-on', ch === '1');
+    cell.classList.toggle('sw-target', tgtCh === '1');
   });
 }
 
@@ -288,10 +297,10 @@ function applyState(s) {
   set('#switch-target-code', 'Target: ' + targetCode);
   set('#switch-current-code', 'Current: ' + currentCode);
 
-  // Invert digit_order to find raw bits → correct switch highlights.
-  const targetInt = s.code ? parseCodeInt(s.code.target) : null;
-  const targetBits = targetInt == null ? null : (rawBitsForTarget(targetInt) & puzzleMask());
-  updateSwitchGrid(s.code ? s.code.code_bits : null, targetBits);
+  updateSwitchGrid(
+    s.code ? s.code.grid : null,
+    s.code ? s.code.target_grid : null
+  );
 
   setModeBadge(s.puzzle && s.puzzle.mode);
 

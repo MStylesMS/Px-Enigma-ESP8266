@@ -8,6 +8,7 @@
 #include "display_mgr.h"
 #include "log.h"
 #include "mqtt_mgr.h"
+#include "sleep_mgr.h"
 #include "state.h"
 
 #include <ArduinoJson.h>
@@ -386,6 +387,14 @@ void handle_command_payload(const uint8_t* payload, size_t len) {
         s_off = true;
         publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());
         mqtt_mgr::publish_state();
+        return;
+    }
+
+    if (!strcmp(cmd, "sleep")) {
+        publish_outcome("command_success", cmd, req, "going_to_sleep",
+                        JsonVariantConst());
+        mqtt_mgr::publish_state();
+        sleep_mgr::enter_sleep_now();
         return;
     }
 

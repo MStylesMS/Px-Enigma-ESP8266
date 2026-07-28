@@ -70,4 +70,19 @@ uint32_t idle_minutes() {
 
 bool enabled() { return s_enabled; }
 
+void enter_sleep_now() {
+    uint32_t idle_min = s_enabled ? idle_minutes() : 0;
+    pxlog::info(TAG, "sleep command — entering deep sleep (idle %u min)", idle_min);
+
+    StaticJsonDocument<96> doc;
+    doc["idle_minutes"] = idle_min;
+    doc["manual"]       = true;
+    mqtt_mgr::publish_event("system", "going_to_sleep",
+                            "Sleep command received; entering deep sleep",
+                            doc.as<JsonVariantConst>());
+
+    pxlog::flush();
+    ESP.deepSleep(0);
+}
+
 } // namespace sleep_mgr

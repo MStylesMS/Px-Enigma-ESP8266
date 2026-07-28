@@ -497,6 +497,19 @@ void test_engine_format_code_custom_digit_order() {
     code_engine::reset_digit_order();
 }
 
+void test_target_matrix_bits_identity_order() {
+    code_engine::reset_digit_order();
+    TEST_ASSERT_EQUAL_UINT32(123456u, code_engine::target_matrix_bits(123456u));
+}
+
+void test_target_matrix_bits_custom_digit_order() {
+    const uint8_t ord[6] = {4, 2, 6, 1, 5, 3};
+    TEST_ASSERT_TRUE(code_engine::set_digit_order(ord));
+    // Display target 123456 → raw digit rearrangement 426153
+    TEST_ASSERT_EQUAL_UINT32(426153u, code_engine::target_matrix_bits(123456u));
+    code_engine::reset_digit_order();
+}
+
 // ---- target parser ----
 
 void test_engine_parse_target_integer_string() {
@@ -1243,6 +1256,8 @@ int main() {
     RUN_TEST(test_engine_format_code_max);
     RUN_TEST(test_engine_format_code_wraps_at_1M);
     RUN_TEST(test_engine_format_code_custom_digit_order);
+    RUN_TEST(test_target_matrix_bits_identity_order);
+    RUN_TEST(test_target_matrix_bits_custom_digit_order);
     RUN_TEST(test_engine_parse_target_integer_string);
     RUN_TEST(test_engine_parse_target_hyphenated);
     RUN_TEST(test_engine_parse_target_short_left_padded);

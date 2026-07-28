@@ -108,7 +108,7 @@ Example response:
   "application": "px-enigma-esp8266",
   "instance": "enigma-01",
   "prop_name": "Enigma Machine",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "status": "active",
   "uptime_s": 342,
   "health": { "free_heap_bytes": 28400, "min_free_heap_bytes": 27000 },
@@ -123,6 +123,7 @@ Example response:
     "code_int": 123456,
     "grid": ["10101", "01000", "00110", "10010"],
     "target": null,
+    "target_grid": null,
     "solved": false
   },
   "display": { "brightness": 1, "blanked": false, "signal_indicator": true },
@@ -401,6 +402,15 @@ mosquitto_pub -h <broker> -t paradox/enigma1/commands \
   -m '{"command":"off"}'
 ```
 
+---
+
+**`sleep`** — Enter deep sleep immediately (operator override). Publishes `command_success` with warning `going_to_sleep`, then a `going_to_sleep` system event, then calls `ESP.deepSleep(0)`. Wake requires a power cycle.
+
+```bash
+mosquitto_pub -h <broker> -t paradox/enigma1/commands \
+  -m '{"command":"sleep"}'
+```
+
 ### 3.3 Retained config override (`<base>/config`)
 
 Publishing a retained JSON payload to this topic deep-merges it into the running RAM config without rebooting. Only the keys present in the payload are modified; all other config fields are preserved.
@@ -484,7 +494,7 @@ Configured via `mqtt.announce_topic` (default `paradox/props`). Published once o
   "application": "px-enigma-esp8266",
   "instance": "enigma-01",
   "prop_name": "Enigma Machine",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "ip": "192.168.1.42",
   "ap_ip": "192.168.4.1",
   "mdns": "enigma-machine",

@@ -4,7 +4,7 @@
 // identify | ping | reloadConfig).
 // Phase 8 adds the project commands per spec §11.2:
 //     setBrightness | setTarget | clearTarget | setMode | reset |
-//     getCode | setBatteryProfile | setSignalIndicator | on | off
+//     getCode | setBatteryProfile | setSignalIndicator | on | off | sleep
 #pragma once
 
 #include "config.h"

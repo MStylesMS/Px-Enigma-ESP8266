@@ -2,6 +2,7 @@
 #include "state.h"
 #include "battery_monitor.h"
 #include "boot_time.h"
+#include "code_engine.h"
 #include "sleep_mgr.h"
 #include "log.h"
 #include "wifi_mgr.h"
@@ -41,8 +42,10 @@ bool get_code_snapshot(uint32_t* code_bits, const char** code_str) {
     return true;
 }
 
-void add_code_grid(JsonObject code_obj, uint32_t code_bits) {
-    JsonArray arr = code_obj["grid"].to<JsonArray>();
+void add_code_grid(JsonObject code_obj, uint32_t code_bits,
+                   const char* array_key) {
+    if (!array_key) array_key = "grid";
+    JsonArray arr = code_obj[array_key].to<JsonArray>();
     char row_str[MAX_GRID_COLS + 1];
     for (uint8_t r = 0; r < s_ui_rows; ++r) {
         for (uint8_t col = 0; col < s_ui_cols; ++col) {
@@ -102,13 +105,21 @@ void build_state(const cfg::Config& c, JsonDocument& out) {
         code_obj["code"]     = s_code_state->code_str;
         code_obj["code_int"] = s_code_state->code_int;
         add_code_grid(code_obj, s_code_state->code_bits);
-        if (s_code_state->has_target) code_obj["target"] = s_code_state->target_str;
-        else                          code_obj["target"] = nullptr;
+        if (s_code_state->has_target) {
+            code_obj["target"] = s_code_state->target_str;
+            add_code_grid(code_obj,
+                          code_engine::target_matrix_bits(s_code_state->target_int),
+                          "target_grid");
+        } else {
+            code_obj["target"]      = nullptr;
+            code_obj["target_grid"] = nullptr;
+        }
         code_obj["solved"]   = s_code_state->solved;
     } else {
         code_obj["code"]     = nullptr;
         code_obj["code_int"] = nullptr;
-        code_obj["grid"]     = nullptr;
+        code_obj["grid"]         = nullptr;
+        code_obj["target_grid"]  = nullptr;
         if (c.puzzle_has_target) code_obj["target"] = c.puzzle_target.c_str();
         else                     code_obj["target"] = nullptr;
         code_obj["solved"]   = false;
