@@ -1,11 +1,13 @@
 // mqtt_mgr.cpp
 #include "mqtt_mgr.h"
+#include "boot_time.h"
 #include "log.h"
 #include "state.h"
 #include "wifi_mgr.h"
 
 #include <ESP8266WiFi.h>
-#include <PubSubClient.h>
+#include <MQTT.h>
+#include <string.h>
 
 namespace mqtt_mgr {
 
@@ -15,8 +17,9 @@ static cfg::Config* s_cfg  = nullptr;
 static CommandCb    s_cb   = nullptr;
 static void*        s_user = nullptr;
 
-static WiFiClient   s_net;
-static PubSubClient s_client(s_net);
+static constexpr size_t MQTT_INBOUND_PACKET_SIZE = 2048;
+static WiFiClient s_net;
+static MQTTClient s_client(MQTT_INBOUND_PACKET_SIZE, MQTT_MAX_PACKET_SIZE);
 
 static String   s_topic_commands;
 static String   s_topic_config;
@@ -29,14 +32,17 @@ static bool     s_config_invalid_pending = false;
 // Rate-limited "invalid_payload" warning (spec §11.3).
 static uint32_t s_last_invalid_payload_warn = 0;
 
+// QoS 1 publish operations may dispatch inbound messages while waiting for a
+// PUBACK. Defer command/config handling until after the MQTT client returns so
+// handlers can safely publish their outcomes.
+static String   s_pending_topic;
+static uint8_t  s_pending_payload[MQTT_INBOUND_PACKET_SIZE];
+static size_t   s_pending_len     = 0;
+static bool     s_pending_message = false;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-static void write_iso_timestamp(char* out, size_t out_size) {
-    uint32_t s = millis() / 1000;
-    snprintf(out, out_size, "uptime+%lus", (unsigned long)s);
-}
 
 static bool publish_json(const char* topic, const JsonDocument& doc, bool retain = false) {
     if (!s_client.connected()) return false;
@@ -48,8 +54,9 @@ static bool publish_json(const char* topic, const JsonDocument& doc, bool retain
     }
     char body[MQTT_MAX_PACKET_SIZE];
     size_t written = serializeJson(doc, body, sizeof(body));
-    bool ok = s_client.publish(topic, (const uint8_t*)body, written, retain);
-    if (!ok) pxlog::warn(TAG, "publish failed: %s (%u bytes)", topic, (unsigned)written);
+    bool ok = s_client.publish(topic, body, (int)written, retain, 1);
+    if (!ok) pxlog::warn(TAG, "publish failed: %s (%u bytes, err=%d)",
+                         topic, (unsigned)written, (int)s_client.lastError());
     return ok;
 }
 
@@ -75,9 +82,7 @@ bool publish_event(const char* type, const char* event, const char* message,
                    JsonVariantConst data) {
     if (!s_cfg || !s_client.connected()) return false;
     JsonDocument doc;
-    char timestamp[40];
-    write_iso_timestamp(timestamp, sizeof(timestamp));
-    doc["timestamp"] = timestamp;
+    doc["ts"]        = boot_time::milliseconds();
     doc["type"]      = type ? type : "system";
     doc["event"]     = event;
     if (message) doc["message"] = message;
@@ -90,9 +95,7 @@ bool publish_warning(const char* warning, const char* message,
                      JsonVariantConst data) {
     if (!s_cfg || !s_client.connected()) return false;
     JsonDocument doc;
-    char timestamp[40];
-    write_iso_timestamp(timestamp, sizeof(timestamp));
-    doc["timestamp"] = timestamp;
+    doc["ts"]        = boot_time::milliseconds();
     doc["warning"]   = warning;
     if (message) doc["message"] = message;
     if (!data.isNull()) doc["data"] = data;
@@ -207,26 +210,48 @@ static void apply_retained_override(const uint8_t* payload, size_t len) {
 }
 
 // ---------------------------------------------------------------------------
-// PubSubClient callback
+// MQTT callback
 // ---------------------------------------------------------------------------
 
-static void on_msg(char* topic, uint8_t* payload, unsigned int len) {
+static void on_msg(MQTTClient*, char topic[], char payload[], int len) {
     if (!topic) return;
 
+    if (len < 0 || (size_t)len > sizeof(s_pending_payload)) {
+        pxlog::warn(TAG, "incoming MQTT payload too large");
+        return;
+    }
+    if (s_pending_message) {
+        pxlog::warn(TAG, "incoming MQTT message dropped while dispatch pending");
+        return;
+    }
+
+    s_pending_topic = topic;
+    s_pending_len = (size_t)len;
+    if (s_pending_len) memcpy(s_pending_payload, payload, s_pending_len);
+    s_pending_message = true;
+}
+
+static void dispatch_pending_message() {
+    if (!s_pending_message) return;
+
+    String topic = s_pending_topic;
+    s_pending_topic = "";
+    s_pending_message = false;
+
     if (s_topic_config.length() && s_topic_config == topic) {
-        apply_retained_override(payload, len);
+        apply_retained_override(s_pending_payload, s_pending_len);
         return;
     }
     if (s_topic_commands.length() && s_topic_commands == topic) {
-        if (s_cb) s_cb(payload, len, s_user);
+        if (s_cb) s_cb(s_pending_payload, s_pending_len, s_user);
         return;
     }
 
-    // Unknown topic — should not normally happen; rate-limited warning.
+    // Unknown topic — should not normally happen; rate-limited log.
     uint32_t now = millis();
     if (now - s_last_invalid_payload_warn > 60000) {
         s_last_invalid_payload_warn = now;
-        pxlog::warn(TAG, "msg on unexpected topic: %s", topic);
+        pxlog::warn(TAG, "msg on unexpected topic: %s", topic.c_str());
     }
 }
 
@@ -239,39 +264,35 @@ static bool try_connect() {
     if (s_cfg->mqtt_host.length() == 0) return false;
     if (s_client.connected())           return true;
 
-    s_client.setServer(s_cfg->mqtt_host.c_str(), s_cfg->mqtt_port);
+    s_client.setHost(s_cfg->mqtt_host.c_str(), s_cfg->mqtt_port);
 
     String client_id  = String("px-enigma-") + cfg::mac_suffix() + "-" + String(millis() % 100000);
     String will_topic = s_cfg->mqtt_base_topic + "/state";
 
     // LWT — simple offline marker.
     JsonDocument will;
-    char timestamp[40];
-    write_iso_timestamp(timestamp, sizeof(timestamp));
-    will["timestamp"]   = timestamp;
+    will["ts"]          = boot_time::milliseconds();
     will["application"] = "px-enigma-esp8266";
     will["instance"]    = s_cfg->instance;
     will["status"]      = "offline";
     char will_body[256];
     size_t will_len = serializeJson(will, will_body, sizeof(will_body));
 
+    s_client.setWill(will_topic.c_str(), will_body, false, 1);
+
     bool ok;
     if (s_cfg->mqtt_username.length()) {
         ok = s_client.connect(client_id.c_str(),
                               s_cfg->mqtt_username.c_str(),
-                              s_cfg->mqtt_password.c_str(),
-                              will_topic.c_str(), 1, false,
-                              will_body);
+                              s_cfg->mqtt_password.c_str());
     } else {
-        ok = s_client.connect(client_id.c_str(),
-                              will_topic.c_str(), 1, false,
-                              will_body);
+        ok = s_client.connect(client_id.c_str());
     }
     (void)will_len;
     if (!ok) {
-        pxlog::warn(TAG, "connect to %s:%u failed rc=%d (backoff=%ums)",
+        pxlog::warn(TAG, "connect to %s:%u failed err=%d (backoff=%ums)",
                     s_cfg->mqtt_host.c_str(), (unsigned)s_cfg->mqtt_port,
-                    s_client.state(), (unsigned)s_connect_backoff_ms);
+                    (int)s_client.lastError(), (unsigned)s_connect_backoff_ms);
         return false;
     }
 
@@ -283,6 +304,7 @@ static bool try_connect() {
     s_topic_config   = s_cfg->mqtt_base_topic + "/config";
     s_client.subscribe(s_topic_commands.c_str(), 1);
     s_client.subscribe(s_topic_config.c_str(),   1);
+    dispatch_pending_message();
     pxlog::info(TAG, "sub %s", s_topic_commands.c_str());
     pxlog::info(TAG, "sub %s (retained override)", s_topic_config.c_str());
 
@@ -298,9 +320,10 @@ static bool try_connect() {
 
 void begin(cfg::Config* c, CommandCb cb, void* user) {
     s_cfg = c; s_cb = cb; s_user = user;
-    s_client.setBufferSize(MQTT_MAX_PACKET_SIZE);
-    s_client.setKeepAlive(MQTT_KEEPALIVE);
-    s_client.setCallback(on_msg);
+    s_client.begin(s_net);
+    s_client.setOptions(MQTT_KEEPALIVE, true, 1000);
+    s_client.dropOverflow(true);
+    s_client.onMessageAdvanced(on_msg);
     appstate::set_mqtt_connected(false);
     pxlog::info(TAG, "mqtt_mgr ready (host=%s:%u base=%s)",
                 c->mqtt_host.length() ? c->mqtt_host.c_str() : "(unset)",
@@ -313,6 +336,7 @@ void loop() {
 
     if (s_client.connected()) {
         s_client.loop();
+        dispatch_pending_message();
     } else {
         appstate::set_mqtt_connected(false);
         uint32_t now = millis();

@@ -383,8 +383,9 @@ eventually does come online).
 
 - The matrix uses software debouncing; sustained dirty contacts can
   cause flicker. Power-cycle to clear any latched state.
-- The raw 20-bit value is exposed in `/api/state` as `code.code_bits`,
-  which makes it easy to identify a single misbehaving cell.
+- The switch grid is exposed in `/api/state` as `code.grid` — each row
+  is a string of `'1'`/`'0'` characters matching the physical layout,
+  making it straightforward to identify a misbehaving cell.
 
 ### The display is dark but the network surface is up
 

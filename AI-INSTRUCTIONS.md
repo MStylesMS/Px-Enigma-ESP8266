@@ -34,7 +34,7 @@ explicit ownership; **no module calls `delay()` or busy-waits**.
 | `battery_monitor` | A0 sampling, hysteresis, `ok` / `low` / `critical` state |
 | `hardware_io` | I2C bus init, low-level display + GPIO drive |
 | `wifi_mgr` | Dual-STA + always-on AP, non-blocking reconnect |
-| `mqtt_mgr` | `PubSubClient`, topic resolution, command dispatch, publishes |
+| `mqtt_mgr` | `MQTTClient`, topic resolution, command dispatch, publishes |
 | `web_ui` | `ESP8266WebServer`, `/api/config`, `/api/state`, settings page |
 | `ota_mgr` | `ESP8266HTTPUpdateServer` + ArduinoOTA |
 | `commands` | Command handler dispatch (one place to add new commands) |
@@ -66,7 +66,7 @@ renderer reads from `code_engine`; it never owns puzzle state.
   `command_success`, `command_failed`, or `command_warning`.
 - **JSON field naming:** snake_case for emitted fields (`remaining_s`, `code_bits`),
   lowerCamelCase for command keys (`setBrightness`, `setTarget`).
-- **Timestamps:** ISO 8601 with millisecond precision.
+- **Timestamps:** emitted envelopes use numeric `ts` milliseconds since boot.
 - **QoS / retain:** QoS 1 everywhere; retain off everywhere except `<base_topic>/config`.
 - **Always-on AP+STA.** `off` affects only the displays â€” the network
   surface (WiFi, MQTT, Web UI, OTA) stays up.
@@ -91,7 +91,7 @@ renderer reads from `code_engine`; it never owns puzzle state.
   directly outside `log.cpp`. Serial output is best-effort; GPIO1/3 are reused
   by the matrix scanner (see hardware spec).
 - **MQTT publishing:** always go through `mqtt_mgr` helpers; never call the raw
-  `PubSubClient` from other modules.
+  `MQTTClient` from other modules.
 
 ## Required commands
 

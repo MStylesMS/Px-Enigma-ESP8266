@@ -8,6 +8,7 @@
 #include "display_mgr.h"
 #include "log.h"
 #include "mqtt_mgr.h"
+#include "state.h"
 
 #include <ArduinoJson.h>
 #include <string.h>
@@ -197,8 +198,8 @@ void handle_command_payload(const uint8_t* payload, size_t len) {
         if (was_invalid) {
             mqtt_mgr::note_config_invalid_pending();
         }
-        publish_outcome("command_success", cmd, req,
-                        was_invalid ? "config_invalid" : nullptr,
+        publish_outcome(was_invalid ? "command_warning" : "command_success",
+                        cmd, req, was_invalid ? "config_invalid" : nullptr,
                         data.as<JsonVariantConst>());
         // Echo a fresh state so subscribers see the reverted values.
         mqtt_mgr::publish_state();
@@ -307,7 +308,7 @@ void handle_command_payload(const uint8_t* payload, size_t len) {
         JsonDocument data;
         data["code"]      = s.code_str;
         data["code_int"]  = s.code_int;
-        data["code_bits"] = s.code_bits;
+        appstate::add_code_grid(data.as<JsonObject>(), s.code_bits);
         mqtt_mgr::publish_event("code", "code_changed", nullptr,
                                 data.as<JsonVariantConst>());
         publish_outcome("command_success", cmd, req, nullptr, JsonVariantConst());

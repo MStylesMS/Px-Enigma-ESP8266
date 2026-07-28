@@ -67,12 +67,24 @@ struct SwitchLayoutConfig {
     uint8_t row_a[switch_matrix::NUM_ROWS];
     uint8_t col_b[switch_matrix::NUM_COLS];
     uint8_t digit_order[6];
+    // UI grid geometry (from switch_layout.json; used to build code.grid in state).
+    uint8_t ui_rows;
+    uint8_t ui_cols;
+    uint8_t switch_count;
+    uint8_t prop_row_to_scan_col[appstate::MAX_GRID_ROWS]; // ui_rows entries
+    uint8_t prop_col_to_scan_row[appstate::MAX_GRID_COLS]; // ui_cols entries
 };
 
 static void load_switch_layout_defaults(SwitchLayoutConfig& m) {
     for (uint8_t i = 0; i < switch_matrix::NUM_ROWS; ++i) m.row_a[i] = i;
     for (uint8_t i = 0; i < switch_matrix::NUM_COLS; ++i) m.col_b[i] = i;
     for (uint8_t i = 0; i < 6; ++i) m.digit_order[i] = (uint8_t)(i + 1);
+    // Default UI geometry: physical rows = scan cols, physical cols = scan rows.
+    m.ui_rows = switch_matrix::NUM_COLS;          // 4
+    m.ui_cols = switch_matrix::NUM_ROWS;          // 5
+    m.switch_count = switch_matrix::NUM_CELLS;    // 20
+    for (uint8_t i = 0; i < m.ui_rows; ++i) m.prop_row_to_scan_col[i] = i;
+    for (uint8_t i = 0; i < m.ui_cols; ++i) m.prop_col_to_scan_row[i] = i;
 }
 
 static bool is_perm_0_n(const uint8_t* vals, uint8_t n) {
@@ -139,6 +151,38 @@ static bool load_switch_layout_file(SwitchLayoutConfig& out) {
         out.digit_order[i] = (uint8_t)d;
         seen_digit[d - 1] = true;
     }
+
+    // Optional UI grid fields — fall back to defaults already set if absent/invalid.
+    int ui_rows_v    = doc["ui_rows"]      | (int)out.ui_rows;
+    int ui_cols_v    = doc["ui_cols"]      | (int)out.ui_cols;
+    int sw_count_v   = doc["switch_count"] | (int)out.switch_count;
+    if (ui_rows_v >= 1 && ui_rows_v <= (int)appstate::MAX_GRID_ROWS &&
+        ui_cols_v >= 1 && ui_cols_v <= (int)appstate::MAX_GRID_COLS &&
+        sw_count_v >= 1 && sw_count_v <= (int)switch_matrix::NUM_CELLS) {
+        out.ui_rows      = (uint8_t)ui_rows_v;
+        out.ui_cols      = (uint8_t)ui_cols_v;
+        out.switch_count = (uint8_t)sw_count_v;
+    }
+    JsonArray prow = doc["prop_row_to_scan_col"].as<JsonArray>();
+    if (!prow.isNull() && (int)prow.size() == (int)out.ui_rows) {
+        bool ok = true;
+        for (uint8_t i = 0; i < out.ui_rows && ok; ++i) {
+            int v = prow[i].as<int>();
+            if (v < 0 || v >= switch_matrix::NUM_COLS) { ok = false; break; }
+            out.prop_row_to_scan_col[i] = (uint8_t)v;
+        }
+        if (!ok) pxlog::warn("main", "switch_layout.json: prop_row_to_scan_col invalid; using default");
+    }
+    JsonArray pcol = doc["prop_col_to_scan_row"].as<JsonArray>();
+    if (!pcol.isNull() && (int)pcol.size() == (int)out.ui_cols) {
+        bool ok = true;
+        for (uint8_t i = 0; i < out.ui_cols && ok; ++i) {
+            int v = pcol[i].as<int>();
+            if (v < 0 || v >= switch_matrix::NUM_ROWS) { ok = false; break; }
+            out.prop_col_to_scan_row[i] = (uint8_t)v;
+        }
+        if (!ok) pxlog::warn("main", "switch_layout.json: prop_col_to_scan_row invalid; using default");
+    }
     return true;
 }
 
@@ -159,6 +203,23 @@ static void apply_switch_layout(const SwitchLayoutConfig& m) {
     if (!code_engine::set_digit_order(m.digit_order)) {
         code_engine::reset_digit_order();
         pxlog::warn("main", "switch layout digit_order invalid; identity fallback");
+    }
+
+    // Compute UI-grid-position → code_bits-bit lookup and register with state module.
+    {
+        int8_t grid_bit[appstate::MAX_GRID_ROWS][appstate::MAX_GRID_COLS];
+        for (uint8_t r = 0; r < appstate::MAX_GRID_ROWS; ++r)
+            for (uint8_t c = 0; c < appstate::MAX_GRID_COLS; ++c)
+                grid_bit[r][c] = -1;
+        for (uint8_t r = 0; r < m.ui_rows && r < appstate::MAX_GRID_ROWS; ++r) {
+            uint8_t scan_col = m.prop_row_to_scan_col[r];
+            for (uint8_t c = 0; c < m.ui_cols && c < appstate::MAX_GRID_COLS; ++c) {
+                uint8_t scan_row = m.prop_col_to_scan_row[c];
+                grid_bit[r][c] = (int8_t)(m.row_a[scan_row] +
+                                          switch_matrix::NUM_ROWS * m.col_b[scan_col]);
+            }
+        }
+        appstate::set_grid_layout(m.ui_rows, m.ui_cols, m.switch_count, grid_bit);
     }
 }
 
@@ -226,7 +287,7 @@ void setup() {
             JsonDocument d;
             d["code"]      = code_str;
             d["code_int"]  = code_int;
-            d["code_bits"] = code_bits;
+            appstate::add_code_grid(d.as<JsonObject>(), code_bits);
             mqtt_mgr::publish_event("code", "code_changed", nullptr,
                                     d.as<JsonVariantConst>());
         };

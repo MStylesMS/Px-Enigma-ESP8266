@@ -231,9 +231,9 @@ The mode is a configuration value and may be changed at runtime via
      retries).
   3. Transitions to `LATCHED` (§3).
   4. Drives the display to blink the matched code at 1 Hz.
-- In `LATCHED`, switch-state changes are still scanned and reported in
-  `state.code.code_bits` (so an operator can confirm the matrix is
-  alive) but are **not** rendered on the display and do not trigger
+- In `LATCHED`, switch-state changes are still scanned and reflected in
+  `state.code.grid` (so an operator can confirm the matrix is alive)
+  but are **not** rendered on the display and do not trigger
   `code_changed` / `code_solved` / `code_unsolved` events.
 - `LATCHED` is left only by:
   - the `reset` MQTT command (returns to `ACTIVE`, clears the latch
@@ -246,17 +246,20 @@ provided.
 
 ### 5.3 Code format on the wire
 
-The code is reported in three interchangeable forms in every event /
-state payload:
+The code is reported in three forms in every event / state payload:
 
 | Field | Type | Example |
 |---|---|---|
 | `code` | string, hyphenated | `"12-34-56"` |
 | `code_int` | integer | `123456` |
-| `code_bits` | integer (20-bit) | `87654` |
+| `grid` | array of strings | `["10101","01000","00110","10010"]` |
 
-`code_bits` is the raw matrix state, useful for debugging and for the
-authoring tool described in §16.
+`grid` is a 2-D representation of the physical switch layout. Each
+element is a row of the prop as seen by the player; each character is
+`'1'` (closed), `'0'` (open), or `'-'` (inactive / not-a-switch). The
+dimensions and mapping are loaded from `switch_layout.json` at boot so
+the grid always matches what the Web UI renders. When no code state is
+available (pre-boot), `grid` is `null`.
 
 ### 5.4 Inputs accepted on `setTarget`
 
@@ -538,6 +541,9 @@ from the base:
 
 QoS defaults: 1 for every topic.
 
+All emitted envelopes use `ts`, a numeric monotonic millisecond count since
+device boot. It is not a wall-clock timestamp.
+
 ### 10.1 Retained config override
 
 `<base_topic>/config` is a **retained** topic that lets an operator
@@ -656,7 +662,7 @@ Published on:
 
 ```json
 {
-  "timestamp": "2026-05-07T16:42:00.123Z",
+  "ts": 1234000,
   "application": "px-enigma-esp8266",
   "instance": "site1-enigma1",
   "version": "0.2.0",
@@ -675,7 +681,7 @@ Published on:
   "code": {
     "code": "12-34-56",
     "code_int": 123456,
-    "code_bits": 87654,
+    "grid": ["10101", "01000", "00110", "10010"],
     "target": "12-34-56",
     "solved": true
   },
@@ -698,7 +704,7 @@ Published on:
 | `command_success`         | command succeeded                             | `command`, `request_id`                |
 | `command_warning`         | command succeeded with advisory               | `command`, `request_id`, `warning`     |
 | `command_failed`          | command rejected                              | `command`, `request_id`, `warning`, `data` |
-| `code_changed`            | displayed code transitioned                   | `code`, `code_int`, `code_bits`        |
+| `code_changed`            | displayed code transitioned                   | `code`, `code_int`, `grid`             |
 | `code_solved`             | live mode: code matches target (transition)   | `code`, `target`                       |
 | `code_unsolved`           | live mode: code no longer matches target      | `code`, `target`                       |
 | `solve`                   | **latching mode**: target reached, latching engaged | `code`, `target`                |
@@ -715,7 +721,7 @@ Event envelope:
 
 ```json
 {
-  "timestamp": "2026-05-07T16:42:00.456Z",
+  "ts": 1234456,
   "type": "code",
   "event": "solve",
   "message": "Puzzle solved (latched at 12-34-56)",
@@ -748,7 +754,7 @@ Published once per MQTT connect to `<announce_topic>` (default
 
 ```json
 {
-  "timestamp": "2026-05-07T16:42:00.000Z",
+  "ts": 1234000,
   "event": "online",
   "application": "px-enigma-esp8266",
   "instance": "site1-enigma1",
@@ -948,8 +954,10 @@ designers can author target codes without running the firmware.
   proceeds left-to-right, then top-to-bottom (so the top row is
   switches `1..cols`, the second row is `cols+1..2·cols`, etc.).
 - **Output.** A list of `0` (open) and `1` (closed) values, one per
-  switch, plus the equivalent decimal `code_int` and the 20-bit
-  `code_bits` value.
+  switch, plus the equivalent decimal `code_int`.
+
+The grid representation produced by the tool matches the `code.grid`
+field in state payloads.
 
 Implementation details (bit layout, default prompt values) are
 documented in the script's header comment.

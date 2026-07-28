@@ -18,6 +18,8 @@
 #include "../src/switch_matrix.cpp"
 #include "../src/code_engine.h"
 #include "../src/code_engine.cpp"
+#include "../src/boot_time.h"
+#include "../src/boot_time.cpp"
 
 // Phase 9b: battery_profiles (needs log.cpp to link pxlog symbols).
 #include "../src/log.h"
@@ -29,8 +31,8 @@
 EspClass   ESP;
 SerialStub Serial;
 
-// millis() stub: return a fixed value sufficient for any timestamp check.
-unsigned long millis() { return 1234000UL; }
+static unsigned long g_millis = 0;
+unsigned long millis() { return g_millis; }
 
 // ---------------------------------------------------------------------------
 void setUp()    {}
@@ -1196,6 +1198,16 @@ void test_sleep_config_default_inactivity() {
 
 // ---------------------------------------------------------------------------
 
+void test_boot_time_extends_millis_rollover() {
+    g_millis = 0xFFFFFFF0UL;
+    TEST_ASSERT_EQUAL_UINT64(0xFFFFFFF0ULL, boot_time::milliseconds());
+
+    g_millis = 20UL;
+    TEST_ASSERT_EQUAL_UINT64(0x100000014ULL, boot_time::milliseconds());
+}
+
+// ---------------------------------------------------------------------------
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_i2c_pins);
@@ -1298,5 +1310,6 @@ int main() {
     RUN_TEST(test_sleep_timeout_past_deadline);
     RUN_TEST(test_sleep_reset_by_switch_change);
     RUN_TEST(test_sleep_config_default_inactivity);
+    RUN_TEST(test_boot_time_extends_millis_rollover);
     return UNITY_END();
 }

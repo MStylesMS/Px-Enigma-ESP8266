@@ -1,6 +1,7 @@
 // state.cpp
 #include "state.h"
 #include "battery_monitor.h"
+#include "boot_time.h"
 #include "sleep_mgr.h"
 #include "log.h"
 #include "wifi_mgr.h"
@@ -13,6 +14,22 @@ static uint32_t s_min_free_heap_bytes = UINT32_MAX;
 static bool     s_mqtt_connected      = false;
 static const code_engine::CodeState* s_code_state = nullptr;
 
+// Grid layout (loaded from switch_layout.json at startup via set_grid_layout()).
+static uint8_t s_ui_rows      = 4;
+static uint8_t s_ui_cols      = 5;
+static uint8_t s_switch_count = 20;
+static int8_t  s_grid_bit[MAX_GRID_ROWS][MAX_GRID_COLS];
+
+void set_grid_layout(uint8_t ui_rows, uint8_t ui_cols, uint8_t switch_count,
+                     const int8_t grid_bit[MAX_GRID_ROWS][MAX_GRID_COLS]) {
+    s_ui_rows      = (ui_rows <= MAX_GRID_ROWS) ? ui_rows : MAX_GRID_ROWS;
+    s_ui_cols      = (ui_cols <= MAX_GRID_COLS) ? ui_cols : MAX_GRID_COLS;
+    s_switch_count = switch_count;
+    for (uint8_t r = 0; r < MAX_GRID_ROWS; ++r)
+        for (uint8_t c = 0; c < MAX_GRID_COLS; ++c)
+            s_grid_bit[r][c] = grid_bit[r][c];
+}
+
 void reset_heap_watermark() { s_min_free_heap_bytes = UINT32_MAX; }
 void set_mqtt_connected(bool v) { s_mqtt_connected = v; }
 bool mqtt_connected() { return s_mqtt_connected; }
@@ -24,18 +41,27 @@ bool get_code_snapshot(uint32_t* code_bits, const char** code_str) {
     return true;
 }
 
-static void write_iso_timestamp(char* out, size_t out_size) {
-    // No NTP yet; emit uptime-based marker (matches clock project convention).
-    uint32_t s = millis() / 1000;
-    snprintf(out, out_size, "uptime+%lus", (unsigned long)s);
+void add_code_grid(JsonObject code_obj, uint32_t code_bits) {
+    JsonArray arr = code_obj["grid"].to<JsonArray>();
+    char row_str[MAX_GRID_COLS + 1];
+    for (uint8_t r = 0; r < s_ui_rows; ++r) {
+        for (uint8_t col = 0; col < s_ui_cols; ++col) {
+            uint8_t sw_num = (uint8_t)(r * s_ui_cols + col + 1);
+            int8_t bit = s_grid_bit[r][col];
+            if (sw_num > s_switch_count || bit < 0)
+                row_str[col] = '-';
+            else
+                row_str[col] = ((code_bits >> (uint8_t)bit) & 1u) ? '1' : '0';
+        }
+        row_str[s_ui_cols] = '\0';
+        arr.add(row_str);
+    }
 }
 
 void build_state(const cfg::Config& c, JsonDocument& out) {
     out.clear();
 
-    char timestamp[40];
-    write_iso_timestamp(timestamp, sizeof(timestamp));
-    out["timestamp"]   = timestamp;
+    out["ts"]          = boot_time::milliseconds();
     out["application"] = "px-enigma-esp8266";
     out["instance"]    = c.instance;
     out["prop_name"]   = c.prop_name;
@@ -73,19 +99,19 @@ void build_state(const cfg::Config& c, JsonDocument& out) {
 
     JsonObject code_obj = out["code"].to<JsonObject>();
     if (s_code_state) {
-        code_obj["code"]      = s_code_state->code_str;
-        code_obj["code_int"]  = s_code_state->code_int;
-        code_obj["code_bits"] = s_code_state->code_bits;
+        code_obj["code"]     = s_code_state->code_str;
+        code_obj["code_int"] = s_code_state->code_int;
+        add_code_grid(code_obj, s_code_state->code_bits);
         if (s_code_state->has_target) code_obj["target"] = s_code_state->target_str;
         else                          code_obj["target"] = nullptr;
-        code_obj["solved"]    = s_code_state->solved;
+        code_obj["solved"]   = s_code_state->solved;
     } else {
-        code_obj["code"]      = nullptr;
-        code_obj["code_int"]  = nullptr;
-        code_obj["code_bits"] = nullptr;
+        code_obj["code"]     = nullptr;
+        code_obj["code_int"] = nullptr;
+        code_obj["grid"]     = nullptr;
         if (c.puzzle_has_target) code_obj["target"] = c.puzzle_target.c_str();
         else                     code_obj["target"] = nullptr;
-        code_obj["solved"]    = false;
+        code_obj["solved"]   = false;
     }
 
     JsonObject disp = out["display"].to<JsonObject>();
@@ -115,9 +141,7 @@ void build_state(const cfg::Config& c, JsonDocument& out) {
 
 void build_announce(const cfg::Config& c, JsonDocument& out) {
     out.clear();
-    char timestamp[40];
-    write_iso_timestamp(timestamp, sizeof(timestamp));
-    out["timestamp"]   = timestamp;
+    out["ts"]          = boot_time::milliseconds();
     out["event"]       = "online";
     out["application"] = "px-enigma-esp8266";
     out["instance"]    = c.instance;
